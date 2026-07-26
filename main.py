@@ -40,9 +40,15 @@ logger = logging.getLogger("ginNews")
 
 async def main() -> None:
     """Bootstrap and run the entire ginNews system."""
-    logger.info("=" * 60)
-    logger.info("  ginNews — Cross-Platform Surveillance Relay")
-    logger.info("=" * 60)
+    print(r"""
+========================================================================
+__      __  ___  _      ____  ___   __  __  ___       ____  ___  _  _  
+\ \    / / | __|| |    / ___|/ _ \ |  \/  || __|     / ___||_ _|| \| | 
+ \ \/\/ /  | _| | |__ | |   | (_) || |\/| || _|     | |  _  | | | .` | 
+  \_/\_/   |___||____| \____|\___/ |_|  |_||___|     \___| |___||_|\_| 
+========================================================================
+""")
+    logger.info("ginNews — Cross-Platform Surveillance Relay")
 
     # ── 1. Load configuration ────────────────────────────────────────
     settings = get_settings()
@@ -93,12 +99,12 @@ async def main() -> None:
     monitors.append(tg_monitor)
     logger.info("Telegram monitor registered")
 
-    # Discord monitor (enabled when channel URLs are configured)
-    if settings.discord_channel_urls:
+    # Discord monitor (enabled when user token is configured)
+    if settings.discord_user_token:
         dc_monitor = DiscordMonitor(settings)
         dc_monitor.on_message(enqueue_alert)
         monitors.append(dc_monitor)
-        logger.info("Discord monitor registered (%d channels)", len(settings.discord_channel_urls))
+        logger.info("Discord monitor registered (Userbot)")
 
     # X / Twitter monitor (enabled when search queries are configured)
     if settings.twitter_search_queries:

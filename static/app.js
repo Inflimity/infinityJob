@@ -153,8 +153,10 @@
 
     function createAlertCard(alert, isNew = false) {
         const meta = PLATFORM_META[alert.platform] || PLATFORM_META.telegram;
-        const severity = alert.severity >= 4 ? 'high' : alert.severity >= 3 ? 'medium' : 'low';
         const timeStr = formatTime(alert.timestamp);
+        const catText = alert.category || 'other';
+        const langText = alert.language || 'en';
+        
         const truncatedText = alert.text.length > 280
             ? alert.text.substring(0, 280) + '...'
             : alert.text;
@@ -165,9 +167,6 @@
         card.dataset.alertId = alert.id || '';
 
         // Build tags
-        const coinTags = (alert.matched_coins || [])
-            .map(c => `<span class="tag coin">${c.toUpperCase()}</span>`)
-            .join('');
         const keywordTags = (alert.matched_keywords || [])
             .map(k => `<span class="tag keyword">${k}</span>`)
             .join('');
@@ -182,14 +181,21 @@
                 <div class="alert-platform">
                     <div class="platform-icon ${alert.platform}">${meta.icon}</div>
                     <div>
-                        <div class="platform-name">${meta.label}</div>
-                        <div class="alert-source">${escapeHtml(alert.source_name)} · ${escapeHtml(alert.author)}</div>
+                        <div class="platform-name">${meta.label} <span style="font-size: 0.85em; color: var(--text-muted)">[${langText}]</span></div>
+                        <div class="alert-source">${escapeHtml(alert.source_name || 'Source')} · ${escapeHtml(alert.author)}</div>
                     </div>
                 </div>
-                <span class="alert-severity severity-${severity}">⚡ ${alert.severity}</span>
+                <span class="alert-severity severity-high">🏷️ ${escapeHtml(catText.toUpperCase())}</span>
             </div>
-            <div class="alert-body">${escapeHtml(truncatedText)}</div>
-            <div class="alert-tags">${coinTags}${keywordTags}</div>
+            <div class="alert-body">
+                <strong>📝 Summary:</strong><br/>
+                ${escapeHtml(alert.summary || alert.text)}
+                <div style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 4px; font-size: 13px; color: var(--text-muted)">
+                    <em>Original Text:</em><br/>
+                    ${escapeHtml(truncatedText)}
+                </div>
+            </div>
+            <div class="alert-tags">${keywordTags}</div>
             <div class="alert-footer">
                 <span class="alert-time">${timeStr}</span>
                 <div class="alert-actions">

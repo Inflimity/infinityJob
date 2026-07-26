@@ -42,9 +42,10 @@ class AlertResponse(BaseModel):
     source_name: str
     author: str
     text: str
-    matched_coins: list[str]
+    language: str
+    category: str
     matched_keywords: list[str]
-    severity: int
+    summary: str
     link: str
     acknowledged: bool
     saved: bool
@@ -103,9 +104,10 @@ async def get_alerts(
                 source_name=a.source_name,
                 author=a.author,
                 text=a.text,
-                matched_coins=json.loads(a.matched_coins) if a.matched_coins else [],
+                language=a.language or "en",
+                category=a.category or "other",
                 matched_keywords=json.loads(a.matched_keywords) if a.matched_keywords else [],
-                severity=a.severity,
+                summary=a.summary or "",
                 link=a.link,
                 acknowledged=a.acknowledged,
                 saved=a.saved,

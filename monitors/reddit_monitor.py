@@ -147,27 +147,28 @@ class RedditMonitor(BaseMonitor):
                         "Error polling RSS for r/%s", sub_name
                     )
 
-            await asyncio.sleep(self._poll_interval)
+            await asyncio.sleep(900)  # Sleep 15 minutes between RSS polls to avoid 429 Rate Limits
 
     async def _fetch_rss_feed(self, sub_name: str, feedparser) -> None:
         """Fetch and parse a single subreddit's RSS feed."""
-        import urllib.request
+        import httpx
 
         url = f"https://www.reddit.com/r/{sub_name}/new/.rss"
 
-        # Fetch RSS feed (blocking I/O — run in executor)
-        loop = asyncio.get_running_loop()
         try:
-            req = urllib.request.Request(
-                url,
-                headers={
-                    "User-Agent": self._settings.reddit_user_agent,
-                },
-            )
-            response_text = await loop.run_in_executor(
-                None,
-                lambda: urllib.request.urlopen(req, timeout=15).read().decode("utf-8"),
-            )
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    },
+                    timeout=15,
+                    follow_redirects=True,
+                )
+                if response.status_code != 200:
+                    logger.warning("Reddit RSS returned %d for r/%s", response.status_code, sub_name)
+                    return
+                response_text = response.text
         except Exception:
             logger.warning("Failed to fetch RSS for r/%s", sub_name)
             return

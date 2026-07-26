@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from core.filters import MatchResult, matches_watchlist
+from core.heuristic_filters import IntentMatch, analyze_intent
 
 if TYPE_CHECKING:
     from core.dedup import DedupBackend
@@ -41,7 +41,7 @@ class ProcessedAlert:
     """Alert that has passed filtering and deduplication."""
 
     raw: RawAlert
-    match: MatchResult
+    intent: IntentMatch
     processed_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -95,6 +95,7 @@ class AlertEngine:
                     continue
 
                 self._stats["received"] += 1
+                logger.info("📥 Received alert from %s by %s: %s", raw_alert.platform, raw_alert.author, raw_alert.text[:100].replace('\n', ' '))
                 await self._process(raw_alert)
                 self._queue.task_done()
 
@@ -113,18 +114,20 @@ class AlertEngine:
 
     async def _process(self, raw: RawAlert) -> None:
         """Run a single alert through the filter → dedup → dispatch pipeline."""
-        # Step 1: Keyword filter
-        match = matches_watchlist(raw.text, self._coins, self._keywords)
-        if match is None:
+        # Step 1: Heuristic intent filter
+        # Twitter alerts come from our deep search queries (already pre-filtered), so use relaxed mode
+        from_search = raw.platform == "twitter"
+        intent = analyze_intent(raw.text, watch_coins=self._coins, from_search=from_search)
+        if intent is None:
+            logger.info("❌ Rejected by filter: %s", raw.text[:80].replace('\n', ' '))
             return
 
         self._stats["matched"] += 1
-        logger.debug(
-            "Match found: coins=%s keywords=%s severity=%d source=%s",
-            match.matched_coins,
-            match.matched_keywords,
-            match.severity_score,
-            raw.source_name,
+        logger.info(
+            "✅ MATCH FOUND: category=%s keywords=%s author=%s",
+            intent.category,
+            intent.matched_keywords,
+            raw.author,
         )
 
         # Step 2: Deduplication
@@ -133,7 +136,7 @@ class AlertEngine:
             logger.debug("Duplicate alert suppressed: %s", raw.text[:80])
             return
 
-        processed = ProcessedAlert(raw=raw, match=match)
+        processed = ProcessedAlert(raw=raw, intent=intent)
 
         # Step 3: Persist to database
         try:

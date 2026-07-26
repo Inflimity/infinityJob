@@ -12,11 +12,17 @@ import logging
 from typing import TYPE_CHECKING
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
+import html as html_lib
 
 if TYPE_CHECKING:
     from core.engine import ProcessedAlert
 
 logger = logging.getLogger(__name__)
+
+
+def _escape(text: str) -> str:
+    """Escape text for Telegram HTML parse mode."""
+    return html_lib.escape(text) if text else ""
 
 
 class TelegramNotifier:
@@ -78,7 +84,7 @@ class TelegramNotifier:
                 await self._bot.send_message(
                     chat_id=self._admin_chat_id,
                     text=text,
-                    parse_mode="Markdown",
+                    parse_mode="HTML",
                     reply_markup=keyboard,
                     disable_web_page_preview=True,
                 )
@@ -112,9 +118,9 @@ class TelegramNotifier:
 
     @staticmethod
     def _format_alert(alert: ProcessedAlert) -> str:
-        """Format a single alert into a rich Markdown message."""
+        """Format a single alert into a rich HTML message."""
         raw = alert.raw
-        match = alert.match
+        intent = alert.intent
 
         platform_emoji = {
             "telegram": "📱",
@@ -123,26 +129,24 @@ class TelegramNotifier:
             "reddit": "🔴",
         }.get(raw.platform, "📡")
 
-        coins_str = ", ".join(f"`{c.upper()}`" for c in match.matched_coins)
-        keywords_str = ", ".join(f"`{k}`" for k in match.matched_keywords)
-
-        # Truncate message text to avoid Telegram's 4096 char limit
-        msg_text = raw.text[:500] + ("..." if len(raw.text) > 500 else "")
+        keywords_str = ", ".join(f"<code>{_escape(k)}</code>" for k in intent.matched_keywords)
+        time_str = raw.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
+        summary_text = _escape(intent.summary_sentence[:500])
 
         lines = [
-            f"🚨 *Alert from {raw.platform.title()}* {platform_emoji}",
+            f"🚨 <b>Real User Complaint — {_escape(raw.platform.title())}</b> {platform_emoji}",
             "",
-            f"💬 *Source:* {raw.source_name}",
-            f"👤 *User:* {raw.author}",
-            f"🪙 *Coins:* {coins_str}",
-            f"🔑 *Keywords:* {keywords_str}",
-            f"⚡ *Severity:* {match.severity_score}",
+            f"👤 <b>Author:</b> {_escape(raw.author)}",
+            f"🌐 <b>Language:</b> {_escape(intent.language)}",
+            f"⏰ <b>Timestamp:</b> {time_str}",
+            f"🏷️ <b>Category:</b> {_escape(intent.category.title())}",
+            f"🔑 <b>Keywords:</b> {keywords_str}",
             "",
-            f"📝 *Message:*\n{msg_text}",
+            f"📝 <b>Summary of Issue:</b>\n{summary_text}",
         ]
 
         if raw.link:
-            lines.append(f"\n🔗 [Jump to Message]({raw.link})")
+            lines.append(f'\n🔗 <a href="{raw.link}">Jump to Post</a>')
 
         return "\n".join(lines)
 
@@ -163,17 +167,17 @@ class TelegramNotifier:
     @staticmethod
     def _format_digest(alerts: list[ProcessedAlert]) -> str:
         """Format multiple alerts into a single digest summary."""
-        header = f"📋 *Alert Digest* — {len(alerts)} alerts\n{'─' * 30}\n"
+        header = f"📋 <b>Alert Digest</b> — {len(alerts)} alerts\n{'─' * 30}\n"
 
         entries = []
         for i, alert in enumerate(alerts, 1):
             raw = alert.raw
-            coins = ", ".join(c.upper() for c in alert.match.matched_coins)
-            snippet = raw.text[:80] + ("..." if len(raw.text) > 80 else "")
-            link_part = f" [↗]({raw.link})" if raw.link else ""
+            cat = _escape(alert.intent.category.title())
+            snippet = _escape(alert.intent.summary_sentence[:80]) + ("..." if len(alert.intent.summary_sentence) > 80 else "")
+            link_part = f' <a href="{raw.link}">↗</a>' if raw.link else ""
             entries.append(
-                f"*{i}.* [{raw.platform.title()}] {raw.source_name}\n"
-                f"   🪙 {coins} — {snippet}{link_part}"
+                f"<b>{i}.</b> [{_escape(raw.platform.title())}] {_escape(raw.author)}\n"
+                f"   🏷️ {cat} — {snippet}{link_part}"
             )
 
         return header + "\n\n".join(entries)

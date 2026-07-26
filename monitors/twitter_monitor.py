@@ -1,8 +1,8 @@
 """
-X (Twitter) Monitor — Playwright persistent context DOM scraper.
+X (Twitter) Deep Monitor — Playwright persistent context DOM scraper.
 
-Monitors X search feeds using live search URLs via a persistent
-browser profile. Extracts tweets from the DOM and emits alerts.
+Executes massive consolidated OR queries to capture 100% of user intent,
+scrolling deep into the "Latest" tab for up to 60 minutes of history.
 """
 
 from __future__ import annotations
@@ -11,10 +11,12 @@ import asyncio
 import hashlib
 import logging
 import os
+from datetime import datetime, timezone, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import quote
 
 from core.engine import RawAlert
+from core.heuristic_filters import CRYPTO_ENTITIES, CRYPTO_ACTIONS, PROBLEM_WORDS
 from monitors.base import BaseMonitor
 
 if TYPE_CHECKING:
@@ -27,118 +29,173 @@ TWEET_SELECTOR = 'article[data-testid="tweet"]'
 TWEET_TEXT_SELECTOR = 'div[data-testid="tweetText"]'
 TWEET_USER_SELECTOR = 'div[data-testid="User-Name"]'
 TWEET_LINK_SELECTOR = 'a[href*="/status/"]'
+TWEET_TIME_SELECTOR = 'time'
+
+
+def build_twitter_queries() -> list[str]:
+    """Generates just 4 mega-queries to minimize searches and protect the account.
+    
+    Each query packs maximum keywords into Twitter's ~500 char query limit.
+    This covers all 52 keywords in only 4 searches instead of 16.
+    """
+    return [
+        # Query 1: Wallet/token problems
+        '(wallet OR token OR coin OR balance OR "smart contract") (error OR failed OR stuck OR missing OR lost OR scam OR bug) -filter:links -giveaway -"dm me" -presale',
+        # Query 2: Transaction/transfer issues  
+        '(withdraw OR swap OR transfer OR deposit OR bridge OR staking) (error OR failed OR stuck OR pending OR "not working" OR "unable to") -filter:links -giveaway -"dm me" -presale',
+        # Query 3: Recovery and help requests
+        '(wallet OR token OR crypto OR blockchain) (help OR support OR recover OR restore OR fix OR "how do I" OR "anyone help") -filter:links -giveaway -"dm me" -presale',
+        # Query 4: Specific complaint patterns
+        '(airdrop OR claim OR reward OR unstake) (scam OR failed OR stuck OR missing OR "not received" OR "can\'t" OR problem) -filter:links -giveaway -"dm me" -presale',
+    ]
 
 
 class TwitterMonitor(BaseMonitor):
-    """Monitors X (Twitter) search feeds via Playwright browser automation."""
+    """Monitors X (Twitter) via deep scrolling of the Latest search feed."""
 
     PLATFORM = "twitter"
 
     def __init__(self, settings: "Settings") -> None:
         super().__init__(name="TwitterMonitor")
         self._settings = settings
-        self._search_queries = settings.twitter_search_queries
+        # Combine our deep heuristic queries with any custom queries the user put in .env
+        self._search_queries = build_twitter_queries() + (settings.twitter_search_queries or [])
         self._poll_interval = settings.poll_interval_seconds
         self._user_data_dir = os.path.abspath("./browser_profiles/twitter")
         self._seen_hashes: set[str] = set()
+        logger.info("TwitterMonitor initialized with %d deep queries", len(self._search_queries))
 
     async def _run(self) -> None:
-        """Launch persistent browser and begin polling X search feeds."""
-        if not self._search_queries:
-            logger.warning("TwitterMonitor: No search queries configured, skipping")
-            while self._running:
-                await asyncio.sleep(60)
-            return
-
+        """Launch persistent browser and begin deep polling X search feeds."""
         from playwright.async_api import async_playwright
 
         async with async_playwright() as pw:
             context = await pw.chromium.launch_persistent_context(
                 user_data_dir=self._user_data_dir,
-                headless=False,  # Set to True once you've logged in manually
+                headless=False,
                 viewport={"width": 1280, "height": 900},
                 args=["--disable-blink-features=AutomationControlled"],
             )
 
             try:
                 page = await context.new_page()
+                
+                # Navigate to X so the user can actually log in if they need to
+                await page.goto("https://x.com", wait_until="domcontentloaded")
+                
+                logger.info("Waiting 5 minutes for potential manual login to X before starting deep scan...")
+                await asyncio.sleep(300)
 
                 while self._running:
+                    # We run a full deep scan cycle
+                    logger.info("Starting new deep scan cycle on X across %d queries", len(self._search_queries))
+                    
                     for query in self._search_queries:
+                        if not self._running:
+                            break
                         try:
                             await self._scrape_search(page, query)
                         except Exception:
-                            logger.exception(
-                                "Error scraping X search: %s", query
-                            )
+                            logger.exception("Error during deep scrape for query: %s", query)
+                        
+                        # 10-minute pause between queries to look exactly like a normal human
+                        await asyncio.sleep(600)
 
-                    await asyncio.sleep(self._poll_interval)
+                    logger.info("Deep scan cycle complete. Sleeping 30 minutes before next cycle.")
+                    await asyncio.sleep(1800)  # 30 minutes between full cycles
             finally:
                 await context.close()
 
     async def _scrape_search(self, page, query: str) -> None:
-        """Navigate to an X live search and extract new tweets."""
+        """Deep scroll an X live search until we hit posts older than 60 minutes."""
         search_url = f"https://x.com/search?q={quote(query)}&f=live"
-        await page.goto(search_url, wait_until="networkidle", timeout=30000)
+        logger.info("Scraping X search: %s", query[:80])
+        
+        # Use domcontentloaded — X never reaches "networkidle" due to constant background requests
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
 
-        # Wait for tweet articles to load
+        # Wait for tweet articles to actually render on the page
         try:
-            await page.wait_for_selector(TWEET_SELECTOR, timeout=15000)
+            await page.wait_for_selector(TWEET_SELECTOR, timeout=20000)
         except Exception:
-            logger.debug("No tweets found for query: %s", query)
+            logger.info("No tweets loaded for query: %s", query[:60])
             return
 
-        # Extract all tweet articles
-        tweets = await page.query_selector_all(TWEET_SELECTOR)
+        now = datetime.now(timezone.utc)
+        scroll_attempts = 0
+        max_scrolls = 20  # Hard cap to prevent infinite scroll bugs
 
-        for tweet in tweets:
-            try:
-                # Extract tweet text
-                text_el = await tweet.query_selector(TWEET_TEXT_SELECTOR)
-                text = await text_el.inner_text() if text_el else ""
-                if not text.strip():
-                    continue
+        while scroll_attempts < max_scrolls and self._running:
+            tweets = await page.query_selector_all(TWEET_SELECTOR)
+            oldest_age_minutes = 0
 
-                # Deduplicate by content hash
-                content_hash = hashlib.sha256(
-                    text.strip().lower().encode()
-                ).hexdigest()[:16]
-                if content_hash in self._seen_hashes:
-                    continue
-                self._seen_hashes.add(content_hash)
+            for tweet in tweets:
+                try:
+                    # Parse timestamp to enforce 60-minute depth
+                    time_el = await tweet.query_selector(TWEET_TIME_SELECTOR)
+                    if time_el:
+                        dt_str = await time_el.get_attribute("datetime")
+                        if dt_str:
+                            tweet_dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+                            age_mins = (now - tweet_dt).total_seconds() / 60
+                            oldest_age_minutes = max(oldest_age_minutes, age_mins)
+                            
+                            # If this specific tweet is older than 60 mins, we can skip processing it
+                            if age_mins > 60:
+                                continue
 
-                # Extract username
-                user_el = await tweet.query_selector(TWEET_USER_SELECTOR)
-                author = "Unknown"
-                if user_el:
-                    user_text = await user_el.inner_text()
-                    # User-Name div typically contains "Display Name\n@username"
-                    lines = user_text.strip().split("\n")
-                    author = lines[-1] if lines else "Unknown"
+                    # Extract tweet text
+                    text_el = await tweet.query_selector(TWEET_TEXT_SELECTOR)
+                    text = await text_el.inner_text() if text_el else ""
+                    if not text.strip():
+                        continue
 
-                # Extract tweet link
-                link = ""
-                link_el = await tweet.query_selector(TWEET_LINK_SELECTOR)
-                if link_el:
-                    href = await link_el.get_attribute("href")
-                    if href:
-                        link = f"https://x.com{href}" if href.startswith("/") else href
+                    # Deduplicate by content hash
+                    content_hash = hashlib.sha256(text.strip().lower().encode()).hexdigest()[:16]
+                    if content_hash in self._seen_hashes:
+                        continue
+                    self._seen_hashes.add(content_hash)
 
-                alert = RawAlert(
-                    platform=self.PLATFORM,
-                    source_name=f"X Search: {query}",
-                    author=author,
-                    text=text,
-                    link=link,
-                )
+                    # Extract username
+                    user_el = await tweet.query_selector(TWEET_USER_SELECTOR)
+                    author = "Unknown"
+                    if user_el:
+                        user_text = await user_el.inner_text()
+                        lines = user_text.strip().split("\n")
+                        author = lines[-1] if lines else "Unknown"
 
-                await self._emit(alert)
+                    # Extract tweet link
+                    link = ""
+                    link_el = await tweet.query_selector(TWEET_LINK_SELECTOR)
+                    if link_el:
+                        href = await link_el.get_attribute("href")
+                        if href:
+                            link = f"https://x.com{href}" if href.startswith("/") else href
 
-            except Exception:
-                logger.debug("Error parsing tweet element", exc_info=True)
+                    alert = RawAlert(
+                        platform=self.PLATFORM,
+                        source_name=f"X Deep Search",
+                        author=author,
+                        text=text,
+                        link=link,
+                    )
 
-        # Cap the seen set to prevent unbounded growth
-        if len(self._seen_hashes) > 10_000:
-            # Keep the most recent half
-            keep = set(list(self._seen_hashes)[-5_000:])
-            self._seen_hashes = keep
+                    await self._emit(alert)
+
+                except Exception:
+                    logger.debug("Error parsing tweet element", exc_info=True)
+
+            # Cap the seen set to prevent unbounded growth
+            if len(self._seen_hashes) > 10_000:
+                self._seen_hashes = set(list(self._seen_hashes)[-5_000:])
+
+            # Check if we've scrolled past 60 minutes
+            if oldest_age_minutes > 60:
+                logger.debug("Reached 60-minute depth (oldest post: %d mins ago). Stopping scroll.", oldest_age_minutes)
+                break
+                
+            # Scroll down to load more
+            await page.keyboard.press("PageDown")
+            await page.keyboard.press("PageDown")
+            await page.wait_for_timeout(2000)
+            scroll_attempts += 1

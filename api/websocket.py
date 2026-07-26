@@ -89,7 +89,7 @@ class ConnectionManager:
     def _serialize_alert(alert: "ProcessedAlert") -> dict:
         """Convert a ProcessedAlert into a JSON-serializable dict."""
         raw = alert.raw
-        match = alert.match
+        intent = alert.intent
         return {
             "type": "alert",
             "data": {
@@ -99,9 +99,10 @@ class ConnectionManager:
                 "text": raw.text,
                 "link": raw.link,
                 "timestamp": raw.timestamp.isoformat(),
-                "matched_coins": match.matched_coins,
-                "matched_keywords": match.matched_keywords,
-                "severity": match.severity_score,
+                "language": intent.language,
+                "category": intent.category,
+                "matched_keywords": intent.matched_keywords,
+                "summary": intent.summary_sentence,
             },
         }
 

@@ -38,8 +38,8 @@ class Settings(BaseSettings):
         "lost", "error", "worst", "hack", "exploit", "rug", "rugpull",
     ]
 
-    # ── Discord (Playwright) ────────────────────────────────────────────
-    discord_channel_urls: str | list[str] = []
+    # ── Discord (Userbot) ────────────────────────────────────────────
+    discord_user_token: str = ""
 
     # ── X / Twitter (Playwright) ────────────────────────────────────────
     twitter_search_queries: str | list[str] = []
@@ -68,7 +68,6 @@ class Settings(BaseSettings):
     @field_validator(
         "watch_coins",
         "complaint_words",
-        "discord_channel_urls",
         "twitter_search_queries",
         "reddit_subreddits",
         mode="before",

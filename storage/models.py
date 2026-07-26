@@ -29,9 +29,10 @@ class Alert(Base):
     source_name: Mapped[str] = mapped_column(String(255), nullable=False)
     author: Mapped[str] = mapped_column(String(255), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
-    matched_coins: Mapped[str] = mapped_column(Text, nullable=False, default="")  # JSON list
-    matched_keywords: Mapped[str] = mapped_column(Text, nullable=False, default="")  # JSON list
-    severity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    language: Mapped[str] = mapped_column(String(10), nullable=False, default="en")
+    category: Mapped[str] = mapped_column(String(50), nullable=False, default="other")
+    matched_keywords: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON list
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     link: Mapped[str] = mapped_column(Text, nullable=False, default="")
     acknowledged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     saved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -44,7 +45,7 @@ class Alert(Base):
     def __repr__(self) -> str:
         return (
             f"<Alert id={self.id} platform={self.platform!r} "
-            f"source={self.source_name!r} severity={self.severity}>"
+            f"category={self.category!r} author={self.author!r}>"
         )
 
 

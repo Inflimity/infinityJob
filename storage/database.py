@@ -48,16 +48,17 @@ class DatabaseManager:
     async def save_alert(self, processed: ProcessedAlert) -> int:
         """Persist a ProcessedAlert and return its database ID."""
         raw = processed.raw
-        match = processed.match
+        intent = processed.intent
 
         alert = Alert(
             platform=raw.platform,
             source_name=raw.source_name,
             author=raw.author,
             text=raw.text,
-            matched_coins=json.dumps(match.matched_coins),
-            matched_keywords=json.dumps(match.matched_keywords),
-            severity=match.severity_score,
+            language=intent.language,
+            category=intent.category,
+            matched_keywords=json.dumps(intent.matched_keywords),
+            summary=intent.summary_sentence,
             link=raw.link,
             created_at=raw.timestamp,
         )
