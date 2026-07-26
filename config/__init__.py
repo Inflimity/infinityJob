@@ -1,0 +1,1 @@
+"""ginNews configuration package."""

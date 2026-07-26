@@ -1,0 +1,10 @@
+telethon>=1.36,<2.0
+python-telegram-bot>=21.0
+playwright>=1.48
+asyncpraw>=7.7
+feedparser>=6.0
+pydantic-settings>=2.0
+aiosqlite>=0.20
+sqlalchemy[asyncio]>=2.0
+redis>=5.0
+python-dotenv>=1.0

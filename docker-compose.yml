@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  ginnews:
+    build: .
+    container_name: ginnews_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./.env:/app/.env
+      - ./data:/app/data
+      - ./browser_profiles:/app/browser_profiles
+    depends_on:
+      - redis
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      # You can override other .env variables here as needed
+
+  redis:
+    image: redis:7-alpine
+    container_name: ginnews_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+
+volumes:
+  redis_data:

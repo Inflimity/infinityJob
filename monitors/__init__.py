@@ -1,0 +1,1 @@
+"""ginNews monitors package."""

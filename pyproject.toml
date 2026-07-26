@@ -1,0 +1,41 @@
+[project]
+name = "ginnews"
+version = "0.1.0"
+description = "Cross-platform social media surveillance and notification relay"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "telethon>=1.36,<2.0",
+    "python-telegram-bot>=21.0",
+    "playwright>=1.48",
+    "asyncpraw>=7.7",
+    "feedparser>=6.0",
+    "pydantic-settings>=2.0",
+    "aiosqlite>=0.20",
+    "sqlalchemy[asyncio]>=2.0",
+    "redis>=5.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=5.0",
+]
+crypto = [
+    "cryptg>=0.4",
+]
+
+[project.scripts]
+ginnews = "main:cli_entry"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.backends._legacy:_Backend"

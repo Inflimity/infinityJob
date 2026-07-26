@@ -1,0 +1,1 @@
+"""ginNews core processing package."""

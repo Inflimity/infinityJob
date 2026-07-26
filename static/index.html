@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ginNews — Cross-platform surveillance and notification relay dashboard">
+    <title>ginNews — Surveillance Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>">
+</head>
+<body>
+    <div class="app">
+        <!-- ── Header ──────────────────────────────────── -->
+        <header class="header">
+            <div class="header-inner">
+                <a href="/" class="logo">
+                    <div class="logo-icon">🛰️</div>
+                    <span class="logo-text">ginNews</span>
+                </a>
+                <div class="header-status">
+                    <div class="status-badge" id="system-status">
+                        <span class="status-dot"></span>
+                        <span id="status-text">Connecting...</span>
+                    </div>
+                    <div class="ws-status" id="ws-indicator">
+                        <span>⚡</span>
+                        <span id="ws-text">WebSocket: connecting</span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- ── Main Content ────────────────────────────── -->
+        <main class="main">
+            <!-- Stats Grid -->
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Received</div>
+                    <div class="stat-value indigo" id="stat-received">—</div>
+                    <div class="stat-sub">messages scanned</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Alerts Matched</div>
+                    <div class="stat-value emerald" id="stat-matched">—</div>
+                    <div class="stat-sub">watchlist hits</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Deduplicated</div>
+                    <div class="stat-value amber" id="stat-deduped">—</div>
+                    <div class="stat-sub">duplicates suppressed</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Dispatched</div>
+                    <div class="stat-value rose" id="stat-dispatched">—</div>
+                    <div class="stat-sub">alerts sent to Telegram</div>
+                </div>
+            </div>
+
+            <!-- Content: Feed + Sidebar -->
+            <div class="content-grid">
+                <!-- Alert Feed -->
+                <section class="feed-section">
+                    <div class="section-header">
+                        <h1 class="section-title">
+                            <span class="icon">📡</span>
+                            Live Alert Feed
+                        </h1>
+                        <div class="filter-bar" id="filter-bar">
+                            <button class="filter-btn active" data-filter="all">All</button>
+                            <button class="filter-btn" data-filter="telegram">📱 Telegram</button>
+                            <button class="filter-btn" data-filter="discord">🎮 Discord</button>
+                            <button class="filter-btn" data-filter="twitter">🐦 X</button>
+                            <button class="filter-btn" data-filter="reddit">🔴 Reddit</button>
+                        </div>
+                    </div>
+
+                    <div class="alert-feed" id="alert-feed">
+                        <!-- Alerts rendered here by JS -->
+                        <div class="empty-state" id="empty-state">
+                            <div class="empty-icon">🛰️</div>
+                            <div class="empty-title">Waiting for alerts...</div>
+                            <div class="empty-desc">Alerts will appear here in real-time as monitors detect matching messages across your configured platforms.</div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Sidebar -->
+                <aside class="sidebar">
+                    <!-- Active Monitors -->
+                    <div class="sidebar-card">
+                        <div class="sidebar-title">⚙️ Active Monitors</div>
+                        <div class="monitor-list" id="monitor-list">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Watchlist -->
+                    <div class="sidebar-card">
+                        <div class="sidebar-title">🪙 Watching Coins</div>
+                        <div class="watchlist" id="coin-watchlist">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <div class="sidebar-card">
+                        <div class="sidebar-title">🔑 Alert Keywords</div>
+                        <div class="watchlist" id="keyword-watchlist">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- Connection Info -->
+                    <div class="sidebar-card">
+                        <div class="sidebar-title">📊 Session Info</div>
+                        <div class="monitor-list">
+                            <div class="monitor-item">
+                                <div class="monitor-info">
+                                    <span class="monitor-icon">⏱️</span>
+                                    <span class="monitor-name">Uptime</span>
+                                </div>
+                                <span class="monitor-status active" id="uptime-display">—</span>
+                            </div>
+                            <div class="monitor-item">
+                                <div class="monitor-info">
+                                    <span class="monitor-icon">🌐</span>
+                                    <span class="monitor-name">WS Clients</span>
+                                </div>
+                                <span class="monitor-status active" id="ws-clients">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
+            </div>
+        </main>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
