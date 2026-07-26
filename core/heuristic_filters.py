@@ -107,7 +107,7 @@ def extract_summary(text: str, keywords: list[str]) -> str:
     return best_sentence.strip() if best_sentence else text.strip()
 
 
-def analyze_intent(raw_text: str, watch_coins: list[str] = None, from_search: bool = False) -> Optional[IntentMatch]:
+def analyze_intent(raw_text: str, watch_coins: list[str] = None, complaint_words: list[str] = None, from_search: bool = False) -> Optional[IntentMatch]:
     """
     Analyzes the text to determine if it's a real user complaint/support request.
     Returns IntentMatch if it passes the heuristic filters, else None.
@@ -124,9 +124,12 @@ def analyze_intent(raw_text: str, watch_coins: list[str] = None, from_search: bo
     # Include user's specific coins as valid entities
     dynamic_entities = CRYPTO_ENTITIES + watch_coins
     
+    # Include user's specific complaint words
+    dynamic_problems = PROBLEM_WORDS + (complaint_words or [])
+    
     found_entities = [k for k in dynamic_entities if re.search(rf"\b{re.escape(k)}[a-z]*\b", text_lower)]
     found_actions = [k for k in CRYPTO_ACTIONS if re.search(rf"\b{re.escape(k)}[a-z]*\b", text_lower)]
-    found_problems = [k for k in PROBLEM_WORDS if re.search(rf"\b{re.escape(k)}[a-z]*\b", text_lower)]
+    found_problems = [k for k in dynamic_problems if re.search(rf"\b{re.escape(k)}[a-z]*\b", text_lower)]
     
     all_matched = found_entities + found_actions + found_problems
     

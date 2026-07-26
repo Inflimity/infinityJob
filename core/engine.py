@@ -117,7 +117,7 @@ class AlertEngine:
         # Step 1: Heuristic intent filter
         # Twitter alerts come from our deep search queries (already pre-filtered), so use relaxed mode
         from_search = raw.platform == "twitter"
-        intent = analyze_intent(raw.text, watch_coins=self._coins, from_search=from_search)
+        intent = analyze_intent(raw.text, watch_coins=self._coins, complaint_words=self._keywords, from_search=from_search)
         if intent is None:
             logger.info("❌ Rejected by filter: %s", raw.text[:80].replace('\n', ' '))
             return
