@@ -146,6 +146,8 @@ class RedditMonitor(BaseMonitor):
                     logger.exception(
                         "Error polling RSS for r/%s", sub_name
                     )
+                # Sleep 5 minutes between subreddits to completely avoid rate limit bans
+                await asyncio.sleep(300)
 
             await asyncio.sleep(900)  # Sleep 15 minutes between RSS polls to avoid 429 Rate Limits
 

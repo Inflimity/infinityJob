@@ -182,7 +182,7 @@ async def get_status():
     monitor_names = []
     if _settings:
         monitor_names.append("telegram")
-        if _settings.discord_channel_urls:
+        if getattr(_settings, "discord_user_token", None):
             monitor_names.append("discord")
         if _settings.twitter_search_queries:
             monitor_names.append("twitter")
@@ -209,7 +209,7 @@ async def get_config():
         "coins": _settings.watch_coins,
         "keywords": _settings.complaint_words,
         "reddit_subreddits": _settings.reddit_subreddits,
-        "discord_channels": len(_settings.discord_channel_urls),
+        "discord_token_set": bool(getattr(_settings, "discord_user_token", None)),
         "twitter_queries": _settings.twitter_search_queries,
         "poll_interval": _settings.poll_interval_seconds,
     }

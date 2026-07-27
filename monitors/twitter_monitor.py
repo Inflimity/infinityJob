@@ -72,10 +72,14 @@ class TwitterMonitor(BaseMonitor):
         async with async_playwright() as pw:
             context = await pw.chromium.launch_persistent_context(
                 user_data_dir=self._user_data_dir,
-                headless=False,
+                headless=True,
                 viewport={"width": 1280, "height": 900},
                 args=["--disable-blink-features=AutomationControlled"],
+                ignore_default_args=["--enable-automation"],
             )
+            
+            # Anti-bot stealth script to bypass "verifying username"
+            await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
             try:
                 page = await context.new_page()
@@ -83,8 +87,20 @@ class TwitterMonitor(BaseMonitor):
                 # Navigate to X so the user can actually log in if they need to
                 await page.goto("https://x.com", wait_until="domcontentloaded")
                 
-                logger.info("Waiting 5 minutes for potential manual login to X before starting deep scan...")
-                await asyncio.sleep(300)
+                # Give X a few seconds to load or redirect
+                await page.wait_for_timeout(3000)
+                
+                # Loop until we detect a logged-in element (like the Tweet button or Home link) or /home URL
+                is_logged_in = False
+                while not is_logged_in and self._running:
+                    if "home" in page.url or await page.query_selector('[data-testid="SideNav_NewTweet_Button"]') or await page.query_selector('[data-testid="AppTabBar_Home_Link"]'):
+                        is_logged_in = True
+                        break
+                    
+                    logger.info("Waiting for manual X login. Please log in using the opened browser window...")
+                    await asyncio.sleep(5)
+                    
+                logger.info("Successfully detected login! Proceeding with deep scan.")
 
                 while self._running:
                     # We run a full deep scan cycle

@@ -40,6 +40,22 @@ class DiscordMonitor(BaseMonitor):
             logger.info("DiscordMonitor: Connected as %s", self._client.user)
 
         @self._client.event
+        async def on_member_join(member: discord.Member):
+            if not self._running:
+                return
+            
+            source = f"{member.guild.name} (Member Join)" if member.guild else "Unknown Guild"
+            alert = RawAlert(
+                platform=self.PLATFORM,
+                source_name=source,
+                author=member.display_name or member.name,
+                text=f"👋 New member joined: {member.name}",
+                link="",
+                is_system_event=True,
+            )
+            await self._emit(alert)
+
+        @self._client.event
         async def on_message(message: discord.Message):
             # We only care if we are running
             if not self._running:
@@ -49,7 +65,20 @@ class DiscordMonitor(BaseMonitor):
             if message.author == self._client.user:
                 return
 
-            if not message.content:
+            if not message.content and message.type != discord.MessageType.new_member:
+                return
+
+            if message.type == discord.MessageType.new_member:
+                source = f"{message.guild.name} (Member Join)" if message.guild else "DM"
+                alert = RawAlert(
+                    platform=self.PLATFORM,
+                    source_name=source,
+                    author=message.author.display_name or message.author.name,
+                    text=f"👋 New member joined: {message.author.name}",
+                    link=message.jump_url,
+                    is_system_event=True,
+                )
+                await self._emit(alert)
                 return
 
             # Format the source nicely

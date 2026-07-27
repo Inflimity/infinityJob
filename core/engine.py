@@ -33,6 +33,7 @@ class RawAlert:
     author: str  # Username or display name
     text: str  # Full message / post text
     link: str = ""  # Direct link to the message / post
+    is_system_event: bool = False  # Set to True to bypass keyword filters
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -115,12 +116,22 @@ class AlertEngine:
     async def _process(self, raw: RawAlert) -> None:
         """Run a single alert through the filter → dedup → dispatch pipeline."""
         # Step 1: Heuristic intent filter
-        # Twitter alerts come from our deep search queries (already pre-filtered), so use relaxed mode
-        from_search = raw.platform == "twitter"
-        intent = analyze_intent(raw.text, watch_coins=self._coins, complaint_words=self._keywords, from_search=from_search)
-        if intent is None:
-            logger.info("❌ Rejected by filter: %s", raw.text[:80].replace('\n', ' '))
-            return
+        if raw.is_system_event:
+            intent = IntentMatch(
+                category="system", 
+                matched_keywords=["system_event"],
+                original_text=raw.text,
+                translated_text=raw.text,
+                language="en",
+                summary_sentence="System event"
+            )
+        else:
+            # Twitter alerts come from our deep search queries (already pre-filtered), so use relaxed mode
+            from_search = raw.platform == "twitter"
+            intent = analyze_intent(raw.text, watch_coins=self._coins, complaint_words=self._keywords, from_search=from_search)
+            if intent is None:
+                logger.info("❌ Rejected by filter: %s", raw.text[:80].replace('\n', ' '))
+                return
 
         self._stats["matched"] += 1
         logger.info(

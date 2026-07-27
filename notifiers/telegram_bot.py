@@ -110,7 +110,7 @@ class TelegramNotifier:
             await self._bot.send_message(
                 chat_id=self._admin_chat_id,
                 text=text,
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 disable_web_page_preview=True,
             )
         except Exception:
