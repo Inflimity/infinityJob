@@ -123,7 +123,7 @@ class AlertEngine:
                 original_text=raw.text,
                 translated_text=raw.text,
                 language="en",
-                summary_sentence="System event"
+                summary_sentence=raw.text
             )
         else:
             # Twitter alerts come from our deep search queries (already pre-filtered), so use relaxed mode

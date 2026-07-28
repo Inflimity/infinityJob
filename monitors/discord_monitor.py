@@ -45,12 +45,29 @@ class DiscordMonitor(BaseMonitor):
                 return
             
             source = f"{member.guild.name} (Member Join)" if member.guild else "Unknown Guild"
+            created_at = member.created_at.strftime("%Y-%m-%d") if getattr(member, "created_at", None) else "Unknown"
+            is_bot = "Yes" if member.bot else "No"
+            
+            text = (
+                f"👋 New member joined: @{member.name}\n"
+                f"Server: {member.guild.name if member.guild else 'Unknown'}\n"
+                f"Account Created: {created_at}\n"
+                f"Bot: {is_bot}"
+            )
+            
+            # Link to the server and system channel if it exists, otherwise just the server
+            if member.guild:
+                channel_id = member.guild.system_channel.id if member.guild.system_channel else member.guild.id
+                link = f"https://discord.com/channels/{member.guild.id}/{channel_id}"
+            else:
+                link = ""
+                
             alert = RawAlert(
                 platform=self.PLATFORM,
                 source_name=source,
                 author=member.display_name or member.name,
-                text=f"👋 New member joined: @{member.name} in server: {member.guild.name if member.guild else 'Unknown'}",
-                link=f"https://discord.com/channels/{member.guild.id}" if member.guild else "",
+                text=text,
+                link=link,
                 is_system_event=True,
             )
             await self._emit(alert)
@@ -70,12 +87,28 @@ class DiscordMonitor(BaseMonitor):
 
             if message.type == discord.MessageType.new_member:
                 source = f"{message.guild.name} (Member Join)" if message.guild else "DM"
+                member = message.author
+                created_at = member.created_at.strftime("%Y-%m-%d") if getattr(member, "created_at", None) else "Unknown"
+                is_bot = "Yes" if member.bot else "No"
+                
+                text = (
+                    f"👋 New member joined: @{member.name}\n"
+                    f"Server: {message.guild.name if message.guild else 'Unknown'}\n"
+                    f"Account Created: {created_at}\n"
+                    f"Bot: {is_bot}"
+                )
+                
+                # Link to the exact channel and message where they joined
+                link = message.jump_url if message.jump_url else (
+                    f"https://discord.com/channels/{message.guild.id}/{message.channel.id}" if message.guild else ""
+                )
+                
                 alert = RawAlert(
                     platform=self.PLATFORM,
                     source_name=source,
-                    author=message.author.display_name or message.author.name,
-                    text=f"👋 New member joined: @{message.author.name} in server: {message.guild.name if message.guild else 'Unknown'}",
-                    link=message.jump_url,
+                    author=member.display_name or member.name,
+                    text=text,
+                    link=link,
                     is_system_event=True,
                 )
                 await self._emit(alert)

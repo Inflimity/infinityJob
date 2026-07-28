@@ -137,20 +137,30 @@ class TelegramNotifier:
         time_str = raw.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC")
         summary_text = _escape(intent.summary_sentence[:500])
 
-        lines = [
-            f"🚨 <b>Real User Complaint — {_escape(raw.platform.title())}</b> {platform_emoji}",
-            "",
-            f"👤 <b>Author:</b> {_escape(raw.author)}",
-            f"🌐 <b>Language:</b> {_escape(intent.language)}",
-            f"⏰ <b>Timestamp:</b> {time_str}",
-            f"🏷️ <b>Category:</b> {_escape(intent.category.title())}",
-            f"🔑 <b>Keywords:</b> {keywords_str}",
-            "",
-            f"📝 <b>Summary of Issue:</b>\n{summary_text}",
-        ]
+        if getattr(raw, "is_system_event", False):
+            lines = [
+                f"🎉 <b>New User Alert — {_escape(raw.platform.title())}</b> {platform_emoji}",
+                "",
+                f"👤 <b>User:</b> {_escape(raw.author)}",
+                f"⏰ <b>Timestamp:</b> {time_str}",
+                "",
+                f"📝 <b>Details:</b>\n{summary_text}",
+            ]
+        else:
+            lines = [
+                f"🚨 <b>Real User Complaint — {_escape(raw.platform.title())}</b> {platform_emoji}",
+                "",
+                f"👤 <b>Author:</b> {_escape(raw.author)}",
+                f"🌐 <b>Language:</b> {_escape(intent.language)}",
+                f"⏰ <b>Timestamp:</b> {time_str}",
+                f"🏷️ <b>Category:</b> {_escape(intent.category.title())}",
+                f"🔑 <b>Keywords:</b> {keywords_str}",
+                "",
+                f"📝 <b>Summary of Issue:</b>\n{summary_text}",
+            ]
 
         if raw.link:
-            lines.append(f'\n🔗 <a href="{raw.link}">Jump to Post</a>')
+            lines.append(f'\n🔗 <a href="{raw.link}">Jump to Post / Server</a>')
 
         return "\n".join(lines)
 
