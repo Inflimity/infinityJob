@@ -25,6 +25,8 @@ def _escape(text: str) -> str:
     return html_lib.escape(text) if text else ""
 
 
+from telegram.request import HTTPXRequest
+
 class TelegramNotifier:
     """Sends alert notifications to a personal Telegram chat via Bot API."""
 
@@ -35,7 +37,9 @@ class TelegramNotifier:
         batch_window_seconds: int = 60,
         batch_threshold: int = 10,
     ) -> None:
-        self._bot = Bot(token=bot_token)
+        # Increased timeouts to help with slow or restricted RDP connections
+        request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
+        self._bot = Bot(token=bot_token, request=request)
         self._admin_chat_id = admin_chat_id
         self._batch_window = batch_window_seconds
         self._batch_threshold = batch_threshold

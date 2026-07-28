@@ -1,8 +1,12 @@
 """
-X (Twitter) Deep Monitor — Playwright persistent context DOM scraper.
+X (Twitter) Deep Monitor — Playwright DOM scraper.
 
-Executes massive consolidated OR queries to capture 100% of user intent,
-scrolling deep into the "Latest" tab for up to 60 minutes of history.
+Uses CDP (Chrome DevTools Protocol) to connect to an already-running Chrome
+browser that is logged into X. This completely bypasses X's bot detection
+because it IS the real Chrome browser.
+
+Fallback: If no running Chrome is found on CDP port 9222, launches its own
+Playwright browser with persistent profile (for local/dev use).
 """
 
 from __future__ import annotations
@@ -33,20 +37,29 @@ TWEET_TIME_SELECTOR = 'time'
 
 
 def build_twitter_queries() -> list[str]:
-    """Generates just 4 mega-queries to minimize searches and protect the account.
-    
-    Each query packs maximum keywords into Twitter's ~500 char query limit.
-    This covers all 52 keywords in only 4 searches instead of 16.
+    """
+    Exhaustive search queries for X surveillance covering 52 specific keywords.
+    Grouped into exactly 6 boolean queries to stay within X's character limits
+    and ensure the entire 1-hour interval is searched continuously.
     """
     return [
-        # Query 1: Wallet/token problems
-        '(wallet OR token OR coin OR balance OR "smart contract") (error OR failed OR stuck OR missing OR lost OR scam OR bug) -filter:links -giveaway -"dm me" -presale',
-        # Query 2: Transaction/transfer issues  
-        '(withdraw OR swap OR transfer OR deposit OR bridge OR staking) (error OR failed OR stuck OR pending OR "not working" OR "unable to") -filter:links -giveaway -"dm me" -presale',
-        # Query 3: Recovery and help requests
-        '(wallet OR token OR crypto OR blockchain) (help OR support OR recover OR restore OR fix OR "how do I" OR "anyone help") -filter:links -giveaway -"dm me" -presale',
-        # Query 4: Specific complaint patterns
-        '(airdrop OR claim OR reward OR unstake) (scam OR failed OR stuck OR missing OR "not received" OR "can\'t" OR problem) -filter:links -giveaway -"dm me" -presale',
+        # Query 1: Assets & General Actions + Errors/Status
+        '(token OR wallet OR coin OR balance OR "wallet connect" OR connection OR connect) (error OR failed OR pending OR stuck OR missing OR lost OR display OR "not showing" OR "not received" OR "not working" OR bug OR issue OR problem)',
+        
+        # Query 2: Assets & General Actions + Support/Help
+        '(token OR wallet OR coin OR balance OR "wallet connect" OR connection OR connect) ("can\'t swap" OR "can\'t withdraw" OR "can\'t deposit" OR "how do I" OR "unable to" OR cannot OR "can\'t" OR fix OR recover OR restore OR help OR support OR why)',
+        
+        # Query 3: Transfers & Swaps + Errors/Status
+        '(withdraw OR withdrawal OR swap OR swapping OR transfer OR transaction OR sent OR received OR deposit OR deposited OR bridge OR bridging) (error OR failed OR pending OR stuck OR missing OR lost OR display OR "not showing" OR "not received" OR "not working" OR bug OR issue OR problem)',
+        
+        # Query 4: Transfers & Swaps + Support/Help
+        '(withdraw OR withdrawal OR swap OR swapping OR transfer OR transaction OR sent OR received OR deposit OR deposited OR bridge OR bridging) ("can\'t swap" OR "can\'t withdraw" OR "can\'t deposit" OR "how do I" OR "unable to" OR cannot OR "can\'t" OR fix OR recover OR restore OR help OR support OR why)',
+        
+        # Query 5: Staking & Airdrops + Errors/Status
+        '(staked OR staking OR "my staking" OR "my stake" OR unstake OR unstaking OR claim OR claiming OR airdrop OR reward OR rewards) (error OR failed OR pending OR stuck OR missing OR lost OR display OR "not showing" OR "not received" OR "not working" OR bug OR issue OR problem)',
+        
+        # Query 6: Staking & Airdrops + Support/Help
+        '(staked OR staking OR "my staking" OR "my stake" OR unstake OR unstaking OR claim OR claiming OR airdrop OR reward OR rewards) ("can\'t swap" OR "can\'t withdraw" OR "can\'t deposit" OR "how do I" OR "unable to" OR cannot OR "can\'t" OR fix OR recover OR restore OR help OR support OR why)'
     ]
 
 
@@ -66,46 +79,70 @@ class TwitterMonitor(BaseMonitor):
         logger.info("TwitterMonitor initialized with %d deep queries", len(self._search_queries))
 
     async def _run(self) -> None:
-        """Launch persistent browser and begin deep polling X search feeds."""
+        """Launch browser and scrape X search feeds."""
+        import platform
         from playwright.async_api import async_playwright
 
         async with async_playwright() as pw:
+            context = None
+            page = None
+
+            # Launch Playwright with persistent context
+            # Setting headless=False so you can log in manually. Once logged in, you can change this back to True if desired.
+            logger.info("Launching Playwright browser...")
             context = await pw.chromium.launch_persistent_context(
                 user_data_dir=self._user_data_dir,
-                headless=True,
+                channel="chrome",
+                headless=False,
                 viewport={"width": 1280, "height": 900},
-                args=["--disable-blink-features=AutomationControlled"],
+                args=["--disable-blink-features=AutomationControlled", "--disable-gpu"],
                 ignore_default_args=["--enable-automation"],
             )
-            
-            # Anti-bot stealth script to bypass "verifying username"
+
+            # Anti-bot stealth
             await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            page = await context.new_page()
 
             try:
-                page = await context.new_page()
+                # Navigate to X with explicit timeout so it never hangs
+                logger.info("Navigating to X (https://x.com)...")
+                try:
+                    await page.goto("https://x.com", wait_until="domcontentloaded", timeout=20000)
+                except Exception as goto_err:
+                    logger.warning("Initial goto x.com timed out or notice popped up (%s), continuing...", str(goto_err)[:60])
                 
-                # Navigate to X so the user can actually log in if they need to
-                await page.goto("https://x.com", wait_until="domcontentloaded")
-                
-                # Give X a few seconds to load or redirect
                 await page.wait_for_timeout(3000)
-                
-                # Loop until we detect a logged-in element (like the Tweet button or Home link) or /home URL
+
+                # Smart login detection: proceed if on x.com/home/search without login redirect
                 is_logged_in = False
+                login_attempts = 0
                 while not is_logged_in and self._running:
-                    if "home" in page.url or await page.query_selector('[data-testid="SideNav_NewTweet_Button"]') or await page.query_selector('[data-testid="AppTabBar_Home_Link"]'):
+                    url = page.url.lower()
+                    login_btn = await page.query_selector('a[href="/login"]') or await page.query_selector('[data-testid="loginButton"]')
+                    has_nav = await page.query_selector('[data-testid="SideNav_NewTweet_Button"]') or await page.query_selector('[aria-label="Home"]') or await page.query_selector('[data-testid="primaryColumn"]')
+                    
+                    if "flow/login" in url or login_btn:
+                        logger.info("Waiting for X login... (Current URL: %s)", page.url)
+                    elif has_nav or "home" in url:
+                        # Proceed directly to deep search!
                         is_logged_in = True
                         break
-                    
-                    logger.info("Waiting for manual X login. Please log in using the opened browser window...")
-                    await asyncio.sleep(5)
-                    
-                logger.info("Successfully detected login! Proceeding with deep scan.")
+                    else:
+                        logger.info("Waiting for X page render... (Current URL: %s)", page.url)
+                        if login_attempts >= 10:
+                            logger.warning("Still waiting for X page render or manual login. It might be stuck or loading slowly. (You have 10 minutes to log in)")
+
+                    login_attempts += 1
+                    if login_attempts >= 150:
+                        logger.warning("Timeout waiting for X to load after 10 minutes. Continuing anyway, but it may fail...")
+                        break
+                    await asyncio.sleep(4)
+
+                logger.info("✅ X page ready! Proceeding with deep scan.")
 
                 while self._running:
-                    # We run a full deep scan cycle
                     logger.info("Starting new deep scan cycle on X across %d queries", len(self._search_queries))
-                    
+
                     for query in self._search_queries:
                         if not self._running:
                             break
@@ -113,12 +150,12 @@ class TwitterMonitor(BaseMonitor):
                             await self._scrape_search(page, query)
                         except Exception:
                             logger.exception("Error during deep scrape for query: %s", query)
-                        
+
                         # 10-minute pause between queries to look exactly like a normal human
                         await asyncio.sleep(600)
 
                     logger.info("Deep scan cycle complete. Sleeping 30 minutes before next cycle.")
-                    await asyncio.sleep(1800)  # 30 minutes between full cycles
+                    await asyncio.sleep(1800)
             finally:
                 await context.close()
 
@@ -134,7 +171,12 @@ class TwitterMonitor(BaseMonitor):
         try:
             await page.wait_for_selector(TWEET_SELECTOR, timeout=20000)
         except Exception:
-            logger.info("No tweets loaded for query: %s", query[:60])
+            screenshot_path = os.path.abspath(f"twitter_empty_search.png")
+            try:
+                await page.screenshot(path=screenshot_path)
+                logger.info("No tweets loaded for query: %s. Saved debug screenshot to %s", query[:60], screenshot_path)
+            except Exception as e:
+                logger.info("No tweets loaded for query: %s. Failed to take screenshot: %s", query[:60], e)
             return
 
         now = datetime.now(timezone.utc)

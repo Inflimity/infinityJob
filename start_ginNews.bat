@@ -9,6 +9,9 @@ if not exist ".venv\Scripts\activate.bat" (
     echo Activating environment and installing requirements...
     call .venv\Scripts\activate.bat
     pip install -r requirements.txt
+    
+    echo Installing Playwright browsers...
+    playwright install chromium
 ) else (
     call .venv\Scripts\activate.bat
 )

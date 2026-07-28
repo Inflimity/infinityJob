@@ -49,8 +49,8 @@ class DiscordMonitor(BaseMonitor):
                 platform=self.PLATFORM,
                 source_name=source,
                 author=member.display_name or member.name,
-                text=f"👋 New member joined: {member.name}",
-                link="",
+                text=f"👋 New member joined: @{member.name} in server: {member.guild.name if member.guild else 'Unknown'}",
+                link=f"https://discord.com/channels/{member.guild.id}" if member.guild else "",
                 is_system_event=True,
             )
             await self._emit(alert)
@@ -74,7 +74,7 @@ class DiscordMonitor(BaseMonitor):
                     platform=self.PLATFORM,
                     source_name=source,
                     author=message.author.display_name or message.author.name,
-                    text=f"👋 New member joined: {message.author.name}",
+                    text=f"👋 New member joined: @{message.author.name} in server: {message.guild.name if message.guild else 'Unknown'}",
                     link=message.jump_url,
                     is_system_event=True,
                 )

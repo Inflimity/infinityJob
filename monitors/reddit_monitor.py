@@ -177,7 +177,18 @@ class RedditMonitor(BaseMonitor):
 
         feed = feedparser.parse(response_text)
 
+        from datetime import datetime, timezone
+        import time
+        now_utc = datetime.now(timezone.utc)
+
         for entry in feed.entries:
+            # Enforce 2-hour age limit
+            if hasattr(entry, "published_parsed") and entry.published_parsed:
+                pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=timezone.utc)
+                age_delta = now_utc - pub_time
+                if age_delta.total_seconds() > 7200:  # 2 hours
+                    continue
+
             entry_id = f"rss:{entry.get('id', '')}"
             if not entry_id or entry_id in self._seen_ids:
                 continue

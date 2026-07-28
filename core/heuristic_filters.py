@@ -19,14 +19,16 @@ logger = logging.getLogger(__name__)
 
 # Core entity keywords (things users have issues with)
 CRYPTO_ENTITIES = [
-    "token", "wallet", "coin", "balance", "transaction", "tx", "smart contract", "blockchain"
+    "token", "wallet", "coin", "balance", "transaction", "tx", "smart contract", "blockchain",
+    "my wallet", "my token", "my coin", "token help", "wallet connect"
 ]
 
 # Action keywords
 CRYPTO_ACTIONS = [
     "withdraw", "withdrawal", "swap", "swapping", "transfer", "sent", "received", 
     "deposit", "deposited", "bridge", "bridging", "staked", "staking", "unstake", 
-    "unstaking", "claim", "claiming", "airdrop", "reward", "rewards", "connect", "connection"
+    "unstaking", "claim", "claiming", "airdrop", "reward", "rewards", "connect", "connection",
+    "my staking", "my stake"
 ]
 
 # Problem / Support indicator keywords
@@ -34,7 +36,7 @@ PROBLEM_WORDS = [
     "error", "failed", "pending", "stuck", "missing", "lost", "display",
     "not showing", "not received", "not working", "can't swap", "can't withdraw",
     "can't deposit", "unable to", "cannot", "can't", "issue", "problem", "bug",
-    "why", "how do I", "fix", "recover", "restore", "scam", "help", "anyone help",
+    "why", "how do i", "fix", "recover", "restore", "scam", "help", "anyone help",
     "please help", "support"
 ]
 
