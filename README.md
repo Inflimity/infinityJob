@@ -1,100 +1,74 @@
-# ginNews — Cross-Platform Surveillance & Notification Relay
+# Infinity Job Search — Autonomous Multi-Platform Job Intelligence Relay
 
-A personal monitoring system that watches **Telegram groups**, **Discord channels**, **X (Twitter) feeds**, and **Reddit subreddits** for keyword-matched alerts and relays them instantly to your Telegram DMs.
+An intelligent, multi-source job intelligence engine that continuously monitors **X (Twitter)**, **Reddit**, **Hacker News**, **Remote Job Boards (Himalayas, We Work Remotely, Jobicy, Arbeitnow)**, **GitHub Paid Bounties**, **Telegram Job Channels**, and **Discord Boards**, classifies opportunities against your multi-track career taxonomy, scores each role (0–100), and sends rich job alert cards with one-click outreach pitch generation directly to your personal Telegram.
 
-No admin rights. No expensive APIs. Just lean engineering.
+---
 
-## Architecture
+## 🎯 Target Career Tracks
 
-```
-[Telegram Groups]   [Discord Channels]   [X Search Feeds]   [Reddit Subreddits]
-       │                    │                    │                    │
-       ▼                    ▼                    ▼                    ▼
-  (Telethon)         (Playwright)         (Playwright)       (AsyncPRAW/RSS)
-       └────────────────────┼────────────────────┼────────────────────┘
-                            ▼
-              ┌──────────────────────────┐
-              │   Core Processing Engine │
-              │  • Keyword/Coin Filter   │
-              │  • Deduplication (Redis) │
-              │  • SQLite Persistence    │
-              └────────────┬─────────────┘
-                           ▼
-              ┌──────────────────────────┐
-              │   Telegram Bot (Your DM) │
-              │  • Instant alerts        │
-              │  • Inline action buttons │
-              │  • Batch digest mode     │
-              └──────────────────────────┘
-```
+1. **💻 Full-Stack / Backend Engineering**
+   - *Roles:* Full Stack Engineer, Backend Engineer, Software Engineer, Web Engineer, API Developer.
+   - *Stack:* TypeScript, React, Next.js, Node.js, PHP/Laravel, C#/.NET, PostgreSQL, REST APIs, Docker.
 
-## Quick Start
+2. **🤖 AI & Agentic Systems Engineering**
+   - *Roles:* AI Engineer, LLM Engineer, AI Developer, Agentic Engineer, Automation Engineer.
+   - *Stack:* Python, FastAPI, LLMs, LangChain, LlamaIndex, Agents, RAG, Supabase, Vector DBs, Playwright.
 
-### 1. Clone & Install
+3. **📊 Business Systems & Workforce Analytics**
+   - *Roles:* Business Analyst, Systems Analyst, Workforce Planning Analyst, Data Analyst, Operations Analyst.
+   - *Stack:* SQL, Excel, Power BI, Tableau, Process Mapping, Workforce Planning, Erlang, Capacity Modeling, KPIs.
+
+---
+
+## ⚡ Key Features
+
+* **Multi-Source Ingestion:** Ingests live job postings from 7 distinct platforms in parallel.
+* **Weighted Composite Scoring (0–100):** Evaluates role title match (35 pts), tech skill density (30 pts), location/timezone compatibility (20 pts), and pay transparency (15 pts).
+* **Negative & Seeker Filter:** Disqualifies `[FOR HIRE]` seeker posts, unpaid gigs, and strict clearance/citizenship constraints.
+* **Instant Pitch Generator:** Interactive `[📋 Pitch Snippet]` Telegram button generates a customized outreach message ready to paste directly into founder DMs or emails.
+* **Interactive Bot Actions:** `[⭐ Save Job]`, `[🔇 Hide Poster (7d)]`, `[🌐 Open & Apply]`.
+* **Zero-Cost Public APIs & Feeds:** Ingests Himalayas, HN Algolia, and Remote RSS feeds with no API subscriptions.
+
+---
+
+## 🚀 Quick Start
+
+### 1. Install Dependencies
 
 ```bash
-cd ginNews
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-playwright install chromium  # Required for Discord & X monitors
+playwright install chromium
 ```
 
-### 2. Configure
+### 2. Configure Environment
+
+Copy `.env.example` to `.env` and configure your Telegram bot credentials:
 
 ```bash
 cp .env.example .env
-# Edit .env with your credentials:
-#   - Telegram API ID/Hash (from my.telegram.org)
-#   - Bot Token (from @BotFather)
-#   - Your personal chat ID
-#   - Subreddits, Discord URLs, X search queries
 ```
 
-### 3. First Run (Manual Login)
+Key configuration values:
+```env
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrsTUVwxyz
+ADMIN_CHAT_ID=your_telegram_user_id
+MIN_ALERT_SCORE=70
+```
+
+### 3. Run the Bot
 
 ```bash
 python main.py
 ```
 
-- **Telegram**: The first run will prompt for your phone number and verification code
-- **Discord & X**: A browser window will open — log in manually. Sessions are saved automatically
-- **Reddit (API)**: No login needed if using API credentials. RSS mode requires no credentials at all
+---
 
-### 4. Production Run
+## 🧪 Testing
 
-Once all sessions are established, you can run headless:
+Run the full pytest suite:
 
 ```bash
-# Set headless=True in discord_monitor.py and twitter_monitor.py, then:
-python main.py
+pytest tests/ -v
 ```
-
-## Configuration
-
-All settings are in `.env`. See `.env.example` for the full list. Key settings:
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `TELEGRAM_API_ID` | Telethon API ID | ✅ |
-| `TELEGRAM_API_HASH` | Telethon API Hash | ✅ |
-| `TELEGRAM_BOT_TOKEN` | Alert bot token | ✅ |
-| `ADMIN_CHAT_ID` | Your personal chat ID | ✅ |
-| `WATCH_COINS` | Coins to track (comma-separated) | ✅ |
-| `COMPLAINT_WORDS` | Alert keywords (comma-separated) | ✅ |
-| `REDDIT_SUBREDDITS` | Subreddits to monitor | Optional |
-| `REDDIT_CLIENT_ID` | Reddit API client ID | Optional |
-| `DISCORD_CHANNEL_URLS` | Discord channel URLs | Optional |
-| `TWITTER_SEARCH_QUERIES` | X search queries | Optional |
-| `REDIS_URL` | Redis URL for deduplication | Optional |
-
-## Testing
-
-```bash
-pip install pytest pytest-asyncio
-python -m pytest tests/ -v
-```
-
-## License
-
-MIT

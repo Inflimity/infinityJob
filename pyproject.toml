@@ -1,7 +1,7 @@
 [project]
-name = "ginnews"
-version = "0.1.0"
-description = "Cross-platform social media surveillance and notification relay"
+name = "infinity-job-search"
+version = "1.0.0"
+description = "Autonomous Multi-Platform Job Intelligence & Notification Engine"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -25,12 +25,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
 ]
-crypto = [
-    "cryptg>=0.4",
-]
 
 [project.scripts]
-ginnews = "main:cli_entry"
+infinity = "main:cli_entry"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

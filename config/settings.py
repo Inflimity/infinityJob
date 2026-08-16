@@ -1,8 +1,8 @@
 """
-ginNews Settings — Central configuration loaded from environment variables.
+Job Search Bot Settings — Central configuration loaded from environment variables.
 
 Uses pydantic-settings for type-safe validation with .env file support.
-All secrets and tuning knobs are defined here as a single source of truth.
+All credentials, search thresholds, and polling frequencies are defined here.
 """
 
 from __future__ import annotations
@@ -23,40 +23,59 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ── Telegram (Telethon Userbot) ──────────────────────────────────────
-    telegram_api_id: int
-    telegram_api_hash: str
+    # ── Telegram (Telethon Userbot for Telegram Job Channels) ────────────
+    telegram_api_id: Optional[int] = None
+    telegram_api_hash: Optional[str] = None
 
-    # ── Telegram Bot (Alert Notifier) ────────────────────────────────────
+    # ── Telegram Bot (Alert Notifier to your DM) ─────────────────────────
     telegram_bot_token: str
     admin_chat_id: int
 
-    # ── Watchlist ────────────────────────────────────────────────────────
-    watch_coins: str | list[str] = ["btc", "eth", "sol"]
-    complaint_words: str | list[str] = [
-        "scam", "bug", "stuck", "failed", "help", "drain",
-        "lost", "error", "worst", "hack", "exploit", "rug", "rugpull",
-    ]
+    # ── Job Match & Scoring Thresholds ──────────────────────────────────
+    min_alert_score: int = 70  # Alerts scoring >= this threshold trigger instant Telegram alerts
+    digest_min_score: int = 50  # Alerts scoring between digest_min_score and min_alert_score get saved to DB
+    max_post_age_minutes: int = 60  # Only process and alert jobs posted within the last 60 minutes
 
-    # ── Discord (Userbot) ────────────────────────────────────────────
-    discord_user_token: str = ""
-
-    # ── X / Twitter (Playwright) ────────────────────────────────────────
+    # ── X / Twitter (Playwright CDP) ─────────────────────────────────────
     twitter_search_queries: str | list[str] = []
 
-    # ── Reddit (AsyncPRAW + RSS) ────────────────────────────────────────
+    # ── Reddit (AsyncPRAW + RSS Fallback) ────────────────────────────────
     reddit_client_id: Optional[str] = None
     reddit_client_secret: Optional[str] = None
-    reddit_user_agent: str = "ginNews/1.0"
-    reddit_subreddits: str | list[str] = []
+    reddit_user_agent: str = "InfinityJobSearch/1.0"
+    reddit_subreddits: str | list[str] = [
+        "forhire",
+        "jobbit",
+        "remotejs",
+        "pythonjobs",
+        "reactjs",
+        "nextjs",
+        "Automate",
+        "businessanalysis",
+        "dataanalysis",
+        "analytics",
+    ]
     reddit_monitor_comments: bool = False
+
+    # ── Hacker News & Remote Boards ──────────────────────────────────────
+    hn_search_enabled: bool = True
+    remote_boards_enabled: bool = True
+    himalayas_categories: list[str] = [
+        "software-development",
+        "data-analytics",
+        "operations-management",
+    ]
+
+    # ── GitHub Bounties & Jobs ───────────────────────────────────────────
+    github_bounties_enabled: bool = True
+    github_token: Optional[str] = None  # Optional personal access token for higher rate limits
 
     # ── Deduplication ───────────────────────────────────────────────────
     redis_url: Optional[str] = None
-    dedup_ttl_seconds: int = 3600
+    dedup_ttl_seconds: int = 86400  # 24h deduplication window
 
     # ── Polling & Batching ──────────────────────────────────────────────
-    poll_interval_seconds: int = 15
+    poll_interval_seconds: int = 30
     alert_batch_window_seconds: int = 60
     alert_batch_threshold: int = 10
 
@@ -66,18 +85,17 @@ class Settings(BaseSettings):
     # ── Validators ──────────────────────────────────────────────────────
 
     @field_validator(
-        "watch_coins",
-        "complaint_words",
         "twitter_search_queries",
         "reddit_subreddits",
+        "himalayas_categories",
         mode="before",
     )
     @classmethod
     def split_comma_separated(cls, v: str | list[str]) -> list[str]:
         """Accept comma-separated strings from .env and split into lists."""
         if isinstance(v, str):
-            return [item.strip().lower() for item in v.split(",") if item.strip()]
-        return [item.strip().lower() for item in v if item.strip()]
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return [item.strip() for item in v if item.strip()]
 
 
 def get_settings() -> Settings:

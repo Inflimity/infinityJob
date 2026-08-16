@@ -1,8 +1,8 @@
 """
-Async database manager for ginNews.
+Async database manager for JobSearchBot.
 
 Handles SQLite connection pool, table creation, and CRUD operations
-for alerts, watch configs, and muted sources.
+for job alerts and muted sources/companies.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -30,7 +30,6 @@ class DatabaseManager:
         self._engine = create_async_engine(
             database_url,
             echo=False,
-            # SQLite-specific: enable WAL mode for better concurrent read perf
             connect_args={"check_same_thread": False} if "sqlite" in database_url else {},
         )
         self._session_factory = async_sessionmaker(
@@ -48,18 +47,26 @@ class DatabaseManager:
     async def save_alert(self, processed: ProcessedAlert) -> int:
         """Persist a ProcessedAlert and return its database ID."""
         raw = processed.raw
-        intent = processed.intent
+        job = processed.job
 
         alert = Alert(
             platform=raw.platform,
             source_name=raw.source_name,
             author=raw.author,
             text=raw.text,
-            language=intent.language,
-            category=intent.category,
-            matched_keywords=json.dumps(intent.matched_keywords),
-            summary=intent.summary_sentence,
-            link=raw.link,
+            language=getattr(job, "language", "en"),
+            track_id=getattr(job, "track_id", "GENERAL"),
+            track_badge=getattr(job, "track_badge", "💼 Job"),
+            role=getattr(job, "role", "Software Role"),
+            company=getattr(job, "company", raw.author),
+            salary=getattr(job, "salary", ""),
+            location=getattr(job, "location", "Remote"),
+            remote_type=getattr(job, "remote_type", "worldwide"),
+            score=getattr(job, "score", 0),
+            matched_skills=json.dumps(getattr(job, "matched_skills", [])),
+            summary=getattr(job, "summary", raw.text[:300]),
+            pitch=getattr(job, "pitch", ""),
+            link=raw.link or getattr(job, "link", ""),
             created_at=raw.timestamp,
         )
 
@@ -67,7 +74,7 @@ class DatabaseManager:
             session.add(alert)
             await session.commit()
             await session.refresh(alert)
-            logger.debug("Alert saved with id=%d", alert.id)
+            logger.debug("Job Alert saved with id=%d", alert.id)
             return alert.id
 
     async def acknowledge_alert(self, alert_id: int) -> bool:
@@ -90,8 +97,13 @@ class DatabaseManager:
             await session.commit()
             return True
 
+    async def get_alert(self, alert_id: int) -> Optional[Alert]:
+        """Fetch a single alert by ID."""
+        async with self._session_factory() as session:
+            return await session.get(Alert, alert_id)
+
     async def is_source_muted(self, platform: str, source_id: str) -> bool:
-        """Check if a source is currently muted."""
+        """Check if a source or company is currently muted."""
         now = datetime.now(timezone.utc)
         async with self._session_factory() as session:
             result = await session.execute(
@@ -119,12 +131,15 @@ class DatabaseManager:
                 "Muted %s source '%s' until %s", platform, source_id, until
             )
 
-    async def get_recent_alerts(self, limit: int = 50) -> list[Alert]:
-        """Fetch the most recent alerts, newest first."""
+    async def get_recent_alerts(
+        self, limit: int = 50, track_id: Optional[str] = None
+    ) -> list[Alert]:
+        """Fetch the most recent job alerts, newest first."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(Alert).order_by(Alert.created_at.desc()).limit(limit)
-            )
+            stmt = select(Alert).order_by(Alert.created_at.desc())
+            if track_id:
+                stmt = stmt.where(Alert.track_id == track_id)
+            result = await session.execute(stmt.limit(limit))
             return list(result.scalars().all())
 
     async def close(self) -> None:

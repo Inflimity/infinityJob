@@ -1,9 +1,9 @@
 """
-Core Orchestration Engine.
+Core Orchestration Engine for JobSearchBot.
 
-Consumes RawAlert objects from an asyncio.Queue, runs them through
-the keyword filter and dedup layer, then dispatches matched alerts
-to the Telegram notifier and persists them to the database.
+Consumes RawAlert objects from an asyncio.Queue, evaluates them against the
+3-track job taxonomy and scoring model, deduplicates, persists to SQLite,
+and dispatches high-relevance matches (score >= threshold) to Telegram.
 """
 
 from __future__ import annotations
@@ -12,9 +12,9 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
-from core.heuristic_filters import IntentMatch, analyze_intent
+from core.job_filters import JobMatch, evaluate_job
 
 if TYPE_CHECKING:
     from core.dedup import DedupBackend
@@ -26,23 +26,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class RawAlert:
-    """Platform-agnostic alert object produced by monitors."""
+    """Platform-agnostic alert object produced by job monitors."""
 
-    platform: str  # "telegram", "discord", "twitter", "reddit"
-    source_name: str  # Group name, channel, subreddit, etc.
-    author: str  # Username or display name
-    text: str  # Full message / post text
-    link: str = ""  # Direct link to the message / post
-    is_system_event: bool = False  # Set to True to bypass keyword filters
+    platform: str  # "twitter", "reddit", "hacker_news", "himalayas", "remote_boards", "github", "telegram", "discord"
+    source_name: str  # Channel, Subreddit, Board Name, etc.
+    author: str  # Poster username, company, or handle
+    text: str  # Full job description / post content
+    link: str = ""  # Direct apply link or post link
+    is_system_event: bool = False  # True for admin test alerts
+    is_dedicated_job_board: bool = False  # True for Himalayas, WeWorkRemotely, etc.
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass(slots=True)
 class ProcessedAlert:
-    """Alert that has passed filtering and deduplication."""
+    """Job offer that has passed classification, scoring, and deduplication."""
 
     raw: RawAlert
-    intent: IntentMatch
+    job: JobMatch
+    db_id: Optional[int] = None
     processed_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
@@ -50,11 +52,7 @@ class ProcessedAlert:
 
 class AlertEngine:
     """
-    Central processing engine.
-
-    Monitors push RawAlert objects into the queue. The engine's consumer
-    loop pulls from the queue, applies filters + dedup, and dispatches
-    alerts that pass both checks.
+    Central job processing and dispatch engine.
     """
 
     def __init__(
@@ -63,19 +61,21 @@ class AlertEngine:
         dedup: DedupBackend,
         notifier: TelegramNotifier,
         db: DatabaseManager,
-        coins: list[str],
-        keywords: list[str],
+        min_alert_score: int = 70,
+        digest_min_score: int = 50,
+        max_post_age_minutes: int = 60,
         ws_broadcast=None,
     ) -> None:
         self._queue = queue
         self._dedup = dedup
         self._notifier = notifier
         self._db = db
-        self._coins = coins
-        self._keywords = keywords
+        self._min_alert_score = min_alert_score
+        self._digest_min_score = digest_min_score
+        self._max_post_age_minutes = max_post_age_minutes
         self._ws_broadcast = ws_broadcast
         self._running = False
-        self._stats = {"received": 0, "matched": 0, "deduplicated": 0, "dispatched": 0}
+        self._stats = {"received": 0, "matched": 0, "deduplicated": 0, "dispatched": 0, "too_old": 0}
 
     @property
     def stats(self) -> dict[str, int]:
@@ -84,10 +84,13 @@ class AlertEngine:
     async def start(self) -> None:
         """Start the consumer loop. Runs until stop() is called."""
         self._running = True
-        logger.info("AlertEngine started — waiting for alerts")
+        logger.info(
+            "Job AlertEngine started — monitoring job streams (Min Score: %d%%, Max Age: %dm)",
+            self._min_alert_score,
+            self._max_post_age_minutes,
+        )
         while self._running:
             try:
-                # Wait for an alert with a timeout so we can check _running
                 try:
                     raw_alert = await asyncio.wait_for(
                         self._queue.get(), timeout=1.0
@@ -96,7 +99,6 @@ class AlertEngine:
                     continue
 
                 self._stats["received"] += 1
-                logger.info("📥 Received alert from %s by %s: %s", raw_alert.platform, raw_alert.author, raw_alert.text[:100].replace('\n', ' '))
                 await self._process(raw_alert)
                 self._queue.task_done()
 
@@ -104,7 +106,7 @@ class AlertEngine:
                 logger.info("AlertEngine cancelled")
                 break
             except Exception:
-                logger.exception("Error processing alert")
+                logger.exception("Error processing job alert")
 
         logger.info("AlertEngine stopped — stats: %s", self._stats)
 
@@ -114,55 +116,95 @@ class AlertEngine:
         logger.info("AlertEngine stop requested")
 
     async def _process(self, raw: RawAlert) -> None:
-        """Run a single alert through the filter → dedup → dispatch pipeline."""
-        # Step 1: Heuristic intent filter
+        """Evaluate a single raw post through age filter → heuristic filter → dedup → persist → notify."""
+        # Step 0: Check post age (Across board <= 60 minutes)
+        if not raw.is_system_event and raw.timestamp:
+            now_utc = datetime.now(timezone.utc)
+            # Ensure raw.timestamp has timezone info
+            ts = raw.timestamp if raw.timestamp.tzinfo else raw.timestamp.replace(tzinfo=timezone.utc)
+            age_minutes = (now_utc - ts).total_seconds() / 60.0
+
+            if age_minutes > self._max_post_age_minutes:
+                self._stats["too_old"] += 1
+                logger.debug(
+                    "Skipping post older than %dm (Age: %.1fm): %s",
+                    self._max_post_age_minutes,
+                    age_minutes,
+                    raw.text[:60].replace("\n", " "),
+                )
+                return
+
         if raw.is_system_event:
-            intent = IntentMatch(
-                category="system", 
-                matched_keywords=["system_event"],
+            job = JobMatch(
+                track_id="SYSTEM",
+                track_badge="⚙️ System",
+                role="System Notification",
+                company=raw.author,
+                salary="",
+                location="Local",
+                remote_type="worldwide",
+                matched_skills=["system"],
+                score=100,
+                summary=raw.text,
                 original_text=raw.text,
-                translated_text=raw.text,
-                language="en",
-                summary_sentence=raw.text
+                link=raw.link,
             )
         else:
-            # Twitter alerts come from our deep search queries (already pre-filtered), so use relaxed mode
-            from_search = raw.platform == "twitter"
-            intent = analyze_intent(raw.text, watch_coins=self._coins, complaint_words=self._keywords, from_search=from_search)
-            if intent is None:
-                logger.info("❌ Rejected by filter: %s", raw.text[:80].replace('\n', ' '))
+            # Check if source or author is muted
+            if await self._db.is_source_muted(raw.platform, raw.author):
+                logger.debug("Skipping muted source: %s/%s", raw.platform, raw.author)
+                return
+
+            from_search = raw.platform in ("twitter", "github")
+            job = evaluate_job(
+                text=raw.text,
+                author=raw.author,
+                link=raw.link,
+                from_search=from_search,
+                is_dedicated_job_board=raw.is_dedicated_job_board,
+            )
+
+            if job is None or job.score < self._digest_min_score:
+                logger.debug("Rejected/Low Score (%s): %s", job.score if job else 0, raw.text[:60].replace("\n", " "))
                 return
 
         self._stats["matched"] += 1
         logger.info(
-            "✅ MATCH FOUND: category=%s keywords=%s author=%s",
-            intent.category,
-            intent.matched_keywords,
-            raw.author,
+            "🎯 JOB MATCH: Track=%s | Score=%d%% | Role=%s | Comp=%s | Platform=%s",
+            job.track_badge,
+            job.score,
+            job.role,
+            job.salary,
+            raw.platform,
         )
 
-        # Step 2: Deduplication
-        if await self._dedup.is_duplicate(raw.text):
+        # Step 2: Deduplication by URL or Text Hash
+        dedup_key = raw.link if raw.link else raw.text
+        if await self._dedup.is_duplicate(dedup_key):
             self._stats["deduplicated"] += 1
-            logger.debug("Duplicate alert suppressed: %s", raw.text[:80])
+            logger.debug("Duplicate job posting suppressed: %s", raw.text[:60])
             return
 
-        processed = ProcessedAlert(raw=raw, intent=intent)
+        processed = ProcessedAlert(raw=raw, job=job)
 
         # Step 3: Persist to database
         try:
-            await self._db.save_alert(processed)
+            db_id = await self._db.save_alert(processed)
+            processed.db_id = db_id
         except Exception:
-            logger.exception("Failed to persist alert to database")
+            logger.exception("Failed to persist job alert to database")
 
-        # Step 4: Dispatch notification (Telegram DM)
-        try:
-            await self._notifier.send_alert(processed)
-            self._stats["dispatched"] += 1
-        except Exception:
-            logger.exception("Failed to dispatch alert notification")
+        # Step 4: Dispatch instant notification if score meets threshold
+        if job.score >= self._min_alert_score or raw.is_system_event:
+            try:
+                await self._notifier.send_alert(processed)
+                self._stats["dispatched"] += 1
+            except Exception:
+                logger.exception("Failed to dispatch Telegram job alert")
+        else:
+            logger.info("Saved to database (Score %d < %d threshold for instant ping)", job.score, self._min_alert_score)
 
-        # Step 5: Broadcast to WebSocket dashboard clients
+        # Step 5: Broadcast to WebSocket clients
         if self._ws_broadcast is not None:
             try:
                 await self._ws_broadcast(processed)

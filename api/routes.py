@@ -1,8 +1,8 @@
 """
-REST API routes for the ginNews dashboard.
+REST API routes for the JobSearchBot dashboard.
 
-Provides endpoints for alert history, configuration management,
-system status, and alert actions (dismiss/mute/save).
+Provides endpoints for job alert history, track filtering,
+system status, and job actions (save, dismiss, mute, pitch).
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
-# ── These get injected at server startup ─────────────────────────────
 _db = None
 _engine = None
 _settings = None
@@ -36,25 +35,28 @@ def init_routes(db, engine, settings) -> None:
 # ── Request / Response Models ────────────────────────────────────────
 
 
-class AlertResponse(BaseModel):
+class JobAlertResponse(BaseModel):
     id: int
     platform: str
     source_name: str
     author: str
     text: str
     language: str
-    category: str
-    matched_keywords: list[str]
+    track_id: str
+    track_badge: str
+    role: str
+    company: str
+    salary: str
+    location: str
+    remote_type: str
+    score: int
+    matched_skills: list[str]
     summary: str
+    pitch: str
     link: str
     acknowledged: bool
     saved: bool
     created_at: str
-
-
-class ConfigUpdate(BaseModel):
-    coins: Optional[list[str]] = None
-    keywords: Optional[list[str]] = None
 
 
 class StatusResponse(BaseModel):
@@ -70,45 +72,52 @@ class ActionResponse(BaseModel):
     message: str
 
 
-# ── Track server start time ─────────────────────────────────────────
 _start_time = datetime.now(timezone.utc)
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
 
 
-@router.get("/alerts", response_model=list[AlertResponse])
+@router.get("/alerts", response_model=list[JobAlertResponse])
 async def get_alerts(
     limit: int = Query(50, ge=1, le=500),
+    track: Optional[str] = Query(None),
     platform: Optional[str] = Query(None),
-    acknowledged: Optional[bool] = Query(None),
+    saved_only: Optional[bool] = Query(None),
 ):
-    """Fetch recent alerts with optional filters."""
+    """Fetch recent job alerts with optional track/platform filters."""
     if _db is None:
         raise HTTPException(503, "Database not initialized")
 
-    alerts = await _db.get_recent_alerts(limit=limit)
+    alerts = await _db.get_recent_alerts(limit=limit, track_id=track)
 
     results = []
     for a in alerts:
-        # Apply optional filters
         if platform and a.platform != platform:
             continue
-        if acknowledged is not None and a.acknowledged != acknowledged:
+        if saved_only and not a.saved:
             continue
 
         results.append(
-            AlertResponse(
+            JobAlertResponse(
                 id=a.id,
                 platform=a.platform,
                 source_name=a.source_name,
                 author=a.author,
                 text=a.text,
                 language=a.language or "en",
-                category=a.category or "other",
-                matched_keywords=json.loads(a.matched_keywords) if a.matched_keywords else [],
+                track_id=a.track_id or "GENERAL",
+                track_badge=a.track_badge or "💼 Job",
+                role=a.role or "Software Role",
+                company=a.company or a.author,
+                salary=a.salary or "",
+                location=a.location or "Remote",
+                remote_type=a.remote_type or "worldwide",
+                score=a.score or 0,
+                matched_skills=json.loads(a.matched_skills) if a.matched_skills else [],
                 summary=a.summary or "",
-                link=a.link,
+                pitch=a.pitch or "",
+                link=a.link or "",
                 acknowledged=a.acknowledged,
                 saved=a.saved,
                 created_at=a.created_at.isoformat() if a.created_at else "",
@@ -118,22 +127,9 @@ async def get_alerts(
     return results
 
 
-@router.post("/alerts/{alert_id}/dismiss", response_model=ActionResponse)
-async def dismiss_alert(alert_id: int):
-    """Mark an alert as acknowledged/dismissed."""
-    if _db is None:
-        raise HTTPException(503, "Database not initialized")
-
-    success = await _db.acknowledge_alert(alert_id)
-    if not success:
-        raise HTTPException(404, f"Alert {alert_id} not found")
-
-    return ActionResponse(success=True, message=f"Alert {alert_id} dismissed")
-
-
 @router.post("/alerts/{alert_id}/save", response_model=ActionResponse)
 async def save_alert(alert_id: int):
-    """Bookmark an alert for later review."""
+    """Bookmark a job alert for later application."""
     if _db is None:
         raise HTTPException(503, "Database not initialized")
 
@@ -141,75 +137,39 @@ async def save_alert(alert_id: int):
     if not success:
         raise HTTPException(404, f"Alert {alert_id} not found")
 
-    return ActionResponse(success=True, message=f"Alert {alert_id} saved")
+    return ActionResponse(success=True, message=f"Job {alert_id} bookmarked")
 
 
-@router.post("/alerts/{alert_id}/mute", response_model=ActionResponse)
-async def mute_source(alert_id: int, hours: int = Query(1, ge=1, le=24)):
-    """Mute the alert's source for the specified number of hours."""
+@router.post("/alerts/{alert_id}/dismiss", response_model=ActionResponse)
+async def dismiss_alert(alert_id: int):
+    """Acknowledge / dismiss a job alert."""
     if _db is None:
         raise HTTPException(503, "Database not initialized")
 
-    # Fetch the alert to get source info
-    alerts = await _db.get_recent_alerts(limit=500)
-    target = None
-    for a in alerts:
-        if a.id == alert_id:
-            target = a
-            break
-
-    if target is None:
+    success = await _db.acknowledge_alert(alert_id)
+    if not success:
         raise HTTPException(404, f"Alert {alert_id} not found")
 
-    until = datetime.now(timezone.utc) + timedelta(hours=hours)
-    await _db.mute_source(target.platform, target.source_name, until)
-
-    return ActionResponse(
-        success=True,
-        message=f"Muted {target.source_name} for {hours}h",
-    )
+    return ActionResponse(success=True, message=f"Job {alert_id} dismissed")
 
 
 @router.get("/status", response_model=StatusResponse)
 async def get_status():
-    """Get system health and monitor status."""
-    from api.websocket import ws_manager
-
+    """System health, uptime, and processing statistics."""
     uptime = (datetime.now(timezone.utc) - _start_time).total_seconds()
-
     stats = _engine.stats if _engine else {}
 
-    monitor_names = []
-    if _settings:
-        monitor_names.append("telegram")
-        if getattr(_settings, "discord_user_token", None):
-            monitor_names.append("discord")
-        if _settings.twitter_search_queries:
-            monitor_names.append("twitter")
-        if _settings.reddit_subreddits:
-            strategy = "praw" if _settings.reddit_client_id else "rss"
-            monitor_names.append(f"reddit ({strategy})")
-
     return StatusResponse(
-        status="running",
+        status="healthy" if _engine and _engine._running else "stopped",
         uptime_seconds=round(uptime, 1),
         stats=stats,
-        monitors=monitor_names,
-        websocket_clients=ws_manager.active_count,
+        monitors=[
+            "TwitterMonitor",
+            "RedditMonitor",
+            "HNMonitor",
+            "RemoteBoardsMonitor",
+            "GitHubBountiesMonitor",
+            "TelegramMonitor",
+        ],
+        websocket_clients=0,
     )
-
-
-@router.get("/config")
-async def get_config():
-    """Get current watchlist configuration."""
-    if _settings is None:
-        raise HTTPException(503, "Settings not initialized")
-
-    return {
-        "coins": _settings.watch_coins,
-        "keywords": _settings.complaint_words,
-        "reddit_subreddits": _settings.reddit_subreddits,
-        "discord_token_set": bool(getattr(_settings, "discord_user_token", None)),
-        "twitter_queries": _settings.twitter_search_queries,
-        "poll_interval": _settings.poll_interval_seconds,
-    }

@@ -1,8 +1,8 @@
 """
-ginNews — Main entry point.
+JobSearchBot — Multi-Platform Job Intelligence & Notification Engine.
 
-Wires together all components (config, engine, monitors, notifier, database)
-and runs them concurrently via asyncio.gather with graceful shutdown handling.
+Wires together monitors (X, Reddit, Hacker News, Remote Boards, GitHub, Telegram, Discord),
+orchestration engine, scoring taxonomy, Telegram notifier, and SQLite persistence.
 """
 
 from __future__ import annotations
@@ -20,8 +20,10 @@ from api.websocket import ws_manager
 from config.settings import get_settings
 from core.dedup import create_dedup_backend
 from core.engine import AlertEngine, RawAlert
-from monitors.discord_monitor import DiscordMonitor
+from monitors.github_bounties_monitor import GitHubBountiesMonitor
+from monitors.hn_monitor import HNMonitor
 from monitors.reddit_monitor import RedditMonitor
+from monitors.remote_boards_monitor import RemoteBoardsMonitor
 from monitors.telegram_monitor import TelegramMonitor
 from monitors.twitter_monitor import TwitterMonitor
 from notifiers.telegram_bot import TelegramNotifier
@@ -35,24 +37,24 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
     stream=sys.stdout,
 )
-logger = logging.getLogger("ginNews")
+logger = logging.getLogger("InfinityJobSearch")
 
 
 async def main() -> None:
-    """Bootstrap and run the entire ginNews system."""
+    """Bootstrap and run the Infinity Job Search system."""
     print(r"""
 ========================================================================
-__      __  ___  _      ____  ___   __  __  ___       ____  ___  _  _  
-\ \    / / | __|| |    / ___|/ _ \ |  \/  || __|     / ___||_ _|| \| | 
- \ \/\/ /  | _| | |__ | |   | (_) || |\/| || _|     | |  _  | | | .` | 
-  \_/\_/   |___||____| \____|\___/ |_|  |_||___|     \___| |___||_|\_| 
+ ___ _  _ ___ ___ _  _ ___ _____   __     _  ___  ___   ___ ___   _   ___  ___ _  _ 
+|_ _| \| | __|_ _| \| |_ _|_   _\ \ / / _ | |/ _ \| _ ) / __| __| /_\ | _ \/ __| || |
+ | || .` | _| | || .` || |  | |  \ V / | || | (_) | _ \ \__ \ _| / _ \|   / (__| __ |
+|___|_|\_|_| |___|_|\_|___| |_|   |_|   \__/ \___/|___/ |___/___/_/ \_\_|_\\___|_||_|
 ========================================================================
 """)
-    logger.info("ginNews — Cross-Platform Surveillance Relay")
+    logger.info("Infinity Job Search — Autonomous Job Intelligence & Alert Relay")
 
     # ── 1. Load configuration ────────────────────────────────────────
     settings = get_settings()
-    logger.info("Configuration loaded")
+    logger.info("Configuration loaded (Min Score Threshold: %d%%)", settings.min_alert_score)
 
     # ── 2. Initialise database ───────────────────────────────────────
     db = DatabaseManager(settings.database_url)
@@ -70,12 +72,14 @@ __      __  ___  _      ____  ___   __  __  ___       ____  ___  _  _
         admin_chat_id=settings.admin_chat_id,
         batch_window_seconds=settings.alert_batch_window_seconds,
         batch_threshold=settings.alert_batch_threshold,
+        db=db,
     )
+    # Start Telegram callback listener for inline buttons
+    await notifier.start_polling_callbacks()
 
     # ── 5. Create the shared alert queue ─────────────────────────────
     queue: asyncio.Queue[RawAlert] = asyncio.Queue()
 
-    # Helper to push alerts into the queue (used by monitors)
     async def enqueue_alert(alert: RawAlert) -> None:
         await queue.put(alert)
 
@@ -85,41 +89,56 @@ __      __  ___  _      ____  ___   __  __  ___       ____  ___  _  _
         dedup=dedup,
         notifier=notifier,
         db=db,
-        coins=settings.watch_coins,
-        keywords=settings.complaint_words,
+        min_alert_score=settings.min_alert_score,
+        digest_min_score=settings.digest_min_score,
+        max_post_age_minutes=settings.max_post_age_minutes,
         ws_broadcast=ws_manager.broadcast_alert,
     )
 
     # ── 7. Initialise monitors ───────────────────────────────────────
     monitors = []
 
-    # Telegram monitor (always enabled — core platform)
-    tg_monitor = TelegramMonitor(settings)
-    tg_monitor.on_message(enqueue_alert)
-    monitors.append(tg_monitor)
-    logger.info("Telegram monitor registered")
+    # Hacker News monitor (public Algolia API + Who is hiring?)
+    if settings.hn_search_enabled:
+        hn_monitor = HNMonitor(settings)
+        hn_monitor.on_message(enqueue_alert)
+        monitors.append(hn_monitor)
+        logger.info("Hacker News monitor registered")
 
-    # Discord monitor (enabled when user token is configured)
-    if settings.discord_user_token:
-        dc_monitor = DiscordMonitor(settings)
-        dc_monitor.on_message(enqueue_alert)
-        monitors.append(dc_monitor)
-        logger.info("Discord monitor registered (Userbot)")
+    # Remote Boards monitor (Himalayas, WeWorkRemotely, Jobicy, Arbeitnow)
+    if settings.remote_boards_enabled:
+        remote_monitor = RemoteBoardsMonitor(settings)
+        remote_monitor.on_message(enqueue_alert)
+        monitors.append(remote_monitor)
+        logger.info("Remote Boards monitor registered (Himalayas, WWR, Jobicy, Arbeitnow)")
 
-    # X / Twitter monitor (enabled when search queries are configured)
-    if settings.twitter_search_queries:
-        tw_monitor = TwitterMonitor(settings)
-        tw_monitor.on_message(enqueue_alert)
-        monitors.append(tw_monitor)
-        logger.info("Twitter monitor registered (%d queries)", len(settings.twitter_search_queries))
+    # GitHub Bounties & Paid Issues monitor
+    if settings.github_bounties_enabled:
+        gh_monitor = GitHubBountiesMonitor(settings)
+        gh_monitor.on_message(enqueue_alert)
+        monitors.append(gh_monitor)
+        logger.info("GitHub Bounties monitor registered")
 
-    # Reddit monitor (enabled when subreddits are configured)
+    # Reddit monitor (AsyncPRAW / RSS fallback)
     if settings.reddit_subreddits:
         rd_monitor = RedditMonitor(settings)
         rd_monitor.on_message(enqueue_alert)
         monitors.append(rd_monitor)
         strategy = "AsyncPRAW" if settings.reddit_client_id else "RSS fallback"
         logger.info("Reddit monitor registered (%d subreddits, %s)", len(settings.reddit_subreddits), strategy)
+
+    # X / Twitter monitor (Playwright DOM scraper)
+    tw_monitor = TwitterMonitor(settings)
+    tw_monitor.on_message(enqueue_alert)
+    monitors.append(tw_monitor)
+    logger.info("X / Twitter monitor registered")
+
+    # Telegram userbot monitor (optional, for developer job groups)
+    if settings.telegram_api_id and settings.telegram_api_hash:
+        tg_monitor = TelegramMonitor(settings)
+        tg_monitor.on_message(enqueue_alert)
+        monitors.append(tg_monitor)
+        logger.info("Telegram Userbot monitor registered")
 
     # ── 8. Set up graceful shutdown ──────────────────────────────────
     shutdown_event = asyncio.Event()
@@ -133,18 +152,15 @@ __      __  ___  _      ____  ___   __  __  ___       ____  ___  _  _
         try:
             loop.add_signal_handler(sig, _signal_handler)
         except NotImplementedError:
-            # Windows doesn't support add_signal_handler
             pass
 
-    # ── 9. Initialise the web dashboard API ──────────────────────────
+    # ── 9. Initialise dashboard API ──────────────────────────────────
     app = create_app()
     init_routes(db, engine, settings)
     logger.info("Dashboard API ready at http://localhost:8000")
 
     # ── 10. Launch everything concurrently ───────────────────────────
     async def run_with_shutdown() -> None:
-        """Run monitors + engine + API server, stop when shutdown_event is set."""
-        # Start the API server as a background task
         uvicorn_config = uvicorn.Config(
             app,
             host="0.0.0.0",
@@ -163,20 +179,14 @@ __      __  ___  _      ____  ___   __  __  ___       ____  ___  _  _
                 asyncio.create_task(monitor.start(), name=monitor.name)
             )
 
-        # Wait for shutdown signal
         await shutdown_event.wait()
 
-        # Graceful teardown
         logger.info("Initiating graceful shutdown...")
-
-        # Stop engine first (drains queue)
         await engine.stop()
 
-        # Stop all monitors
         for monitor in monitors:
             await monitor.stop()
 
-        # Cancel remaining tasks
         for task in tasks:
             if not task.done():
                 task.cancel()
@@ -186,16 +196,15 @@ __      __  ___  _      ____  ___   __  __  ___       ____  ___  _  _
     try:
         await run_with_shutdown()
     finally:
-        # ── 10. Cleanup ──────────────────────────────────────────────
         logger.info("Cleaning up resources...")
         await notifier.close()
         await dedup.close()
         await db.close()
-        logger.info("ginNews shut down cleanly ✓")
+        logger.info("JobSearchBot shut down cleanly ✓")
 
 
 def cli_entry() -> None:
-    """CLI entry point for `ginnews` command."""
+    """CLI entry point."""
     asyncio.run(main())
 
 

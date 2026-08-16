@@ -1,18 +1,17 @@
 """
-Reddit Monitor — Dual-strategy with AsyncPRAW streaming + RSS feed fallback.
+Reddit Job Monitor — Dual-strategy with AsyncPRAW streaming + RSS feed fallback.
 
-Strategy A (preferred): Uses asyncpraw to open real-time submission/comment
-streams on configured subreddits. Requires Reddit API credentials.
-
+Strategy A (preferred): Uses asyncpraw to stream real-time posts from targeted job/tech subreddits.
 Strategy B (fallback): Polls subreddit RSS feeds (no credentials needed).
-Automatically selected when REDDIT_CLIENT_ID is not set.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
+import re
+from datetime import datetime, timezone
+import time
 from typing import TYPE_CHECKING
 
 from core.engine import RawAlert
@@ -24,8 +23,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def clean_html(raw_html: str) -> str:
+    """Removes HTML tags and entities from RSS summaries."""
+    clean = re.sub(r"<[^>]+>", " ", raw_html)
+    clean = re.sub(r"&[a-z]+;", " ", clean)
+    return re.sub(r"\s+", " ", clean).strip()
+
+
 class RedditMonitor(BaseMonitor):
-    """Monitors Reddit subreddits via AsyncPRAW or RSS feeds."""
+    """Monitors Reddit subreddits for hiring posts via AsyncPRAW or RSS feeds."""
 
     PLATFORM = "reddit"
 
@@ -46,13 +52,11 @@ class RedditMonitor(BaseMonitor):
             return
 
         if self._settings.reddit_client_id:
-            logger.info("RedditMonitor: Using AsyncPRAW real-time stream")
+            logger.info("RedditMonitor: Using AsyncPRAW real-time stream across %d subreddits", len(self._subreddits))
             await self._stream_via_praw()
         else:
-            logger.info("RedditMonitor: Using RSS feed fallback (no API credentials)")
+            logger.info("RedditMonitor: Using RSS feed fallback across %d subreddits", len(self._subreddits))
             await self._poll_via_rss()
-
-    # ── Strategy A: AsyncPRAW Streaming ──────────────────────────────
 
     async def _stream_via_praw(self) -> None:
         """Monitor subreddits via asyncpraw's real-time submission stream."""
@@ -65,7 +69,6 @@ class RedditMonitor(BaseMonitor):
         )
 
         try:
-            # Join all configured subreddits into a multi-subreddit string
             multi = "+".join(self._subreddits)
             subreddit = await reddit.subreddit(multi)
 
@@ -82,13 +85,12 @@ class RedditMonitor(BaseMonitor):
                     )
                 )
 
-            # Run until cancelled
             await asyncio.gather(*tasks)
         finally:
             await reddit.close()
 
     async def _stream_submissions(self, subreddit) -> None:
-        """Stream new submissions (posts) from a subreddit."""
+        """Stream new submissions from configured subreddits."""
         async for submission in subreddit.stream.submissions(skip_existing=True):
             if not self._running:
                 break
@@ -98,21 +100,23 @@ class RedditMonitor(BaseMonitor):
                 continue
             self._seen_ids.add(post_id)
 
-            # Combine title and selftext for keyword matching
             text = f"{submission.title}\n{submission.selftext or ''}"
+            flair = f" [{submission.link_flair_text}]" if submission.link_flair_text else ""
+            created_ts = datetime.fromtimestamp(submission.created_utc, tz=timezone.utc)
 
             alert = RawAlert(
                 platform=self.PLATFORM,
-                source_name=f"r/{submission.subreddit.display_name}",
+                source_name=f"r/{submission.subreddit.display_name}{flair}",
                 author=f"u/{submission.author.name}" if submission.author else "u/[deleted]",
                 text=text.strip(),
                 link=f"https://reddit.com{submission.permalink}",
+                timestamp=created_ts,
             )
 
             await self._emit(alert)
 
     async def _stream_comments(self, subreddit) -> None:
-        """Stream new comments from a subreddit."""
+        """Stream new comments from configured subreddits."""
         async for comment in subreddit.stream.comments(skip_existing=True):
             if not self._running:
                 break
@@ -121,6 +125,7 @@ class RedditMonitor(BaseMonitor):
             if comment_id in self._seen_ids:
                 continue
             self._seen_ids.add(comment_id)
+            created_ts = datetime.fromtimestamp(comment.created_utc, tz=timezone.utc)
 
             alert = RawAlert(
                 platform=self.PLATFORM,
@@ -128,31 +133,28 @@ class RedditMonitor(BaseMonitor):
                 author=f"u/{comment.author.name}" if comment.author else "u/[deleted]",
                 text=comment.body,
                 link=f"https://reddit.com{comment.permalink}",
+                timestamp=created_ts,
             )
 
             await self._emit(alert)
 
-    # ── Strategy B: RSS Feed Polling ─────────────────────────────────
-
     async def _poll_via_rss(self) -> None:
-        """Poll subreddit RSS feeds at the configured interval."""
+        """Poll subreddit RSS feeds using multi-subreddit feed for 0 rate limits."""
         import feedparser
 
         while self._running:
-            for sub_name in self._subreddits:
-                try:
-                    await self._fetch_rss_feed(sub_name, feedparser)
-                except Exception:
-                    logger.exception(
-                        "Error polling RSS for r/%s", sub_name
-                    )
-                # Sleep 5 minutes between subreddits to completely avoid rate limit bans
-                await asyncio.sleep(300)
+            try:
+                # Query all configured subreddits in a single combined RSS feed
+                multi_sub = "+".join(self._subreddits)
+                await self._fetch_rss_feed(multi_sub, feedparser)
+            except Exception:
+                logger.exception("Error polling Reddit RSS")
 
-            await asyncio.sleep(900)  # Sleep 15 minutes between RSS polls to avoid 429 Rate Limits
+            # Wait 90 seconds between cycles
+            await asyncio.sleep(90)
 
     async def _fetch_rss_feed(self, sub_name: str, feedparser) -> None:
-        """Fetch and parse a single subreddit's RSS feed."""
+        """Fetch and parse a subreddit RSS feed."""
         import httpx
 
         url = f"https://www.reddit.com/r/{sub_name}/new/.rss"
@@ -162,31 +164,28 @@ class RedditMonitor(BaseMonitor):
                 response = await client.get(
                     url,
                     headers={
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                     },
                     timeout=15,
                     follow_redirects=True,
                 )
                 if response.status_code != 200:
-                    logger.warning("Reddit RSS returned %d for r/%s", response.status_code, sub_name)
+                    logger.warning("Reddit RSS returned status %d", response.status_code)
                     return
                 response_text = response.text
         except Exception:
-            logger.warning("Failed to fetch RSS for r/%s", sub_name)
+            logger.warning("Failed to fetch Reddit RSS")
             return
 
         feed = feedparser.parse(response_text)
-
-        from datetime import datetime, timezone
-        import time
         now_utc = datetime.now(timezone.utc)
 
         for entry in feed.entries:
-            # Enforce 2-hour age limit
+            # 60-minute age filter
+            pub_time = now_utc
             if hasattr(entry, "published_parsed") and entry.published_parsed:
                 pub_time = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=timezone.utc)
-                age_delta = now_utc - pub_time
-                if age_delta.total_seconds() > 7200:  # 2 hours
+                if (now_utc - pub_time).total_seconds() > 3600:  # 60 minutes
                     continue
 
             entry_id = f"rss:{entry.get('id', '')}"
@@ -195,10 +194,10 @@ class RedditMonitor(BaseMonitor):
             self._seen_ids.add(entry_id)
 
             title = entry.get("title", "")
-            # RSS entries have HTML content; extract a plain text summary
-            summary = entry.get("summary", "")
-            text = f"{title}\n{summary}" if summary else title
+            raw_summary = entry.get("summary", "")
+            clean_summary = clean_html(raw_summary)
 
+            text = f"{title}\n{clean_summary}" if clean_summary else title
             author = entry.get("author", "u/unknown")
             link = entry.get("link", "")
 
@@ -208,11 +207,10 @@ class RedditMonitor(BaseMonitor):
                 author=author,
                 text=text.strip(),
                 link=link,
+                timestamp=pub_time,
             )
 
             await self._emit(alert)
 
-        # Cap seen set
         if len(self._seen_ids) > 10_000:
-            keep = set(list(self._seen_ids)[-5_000:])
-            self._seen_ids = keep
+            self._seen_ids = set(list(self._seen_ids)[-5_000:])
